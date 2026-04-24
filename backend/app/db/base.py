@@ -5,7 +5,6 @@ from datetime import datetime
 from sqlalchemy import MetaData
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-
 # Stable naming makes future Alembic diffs easier to read and safer to review.
 NAMING_CONVENTION = {
     "ix": "ix_%(column_0_label)s",

@@ -16,6 +16,7 @@ dependencies = [
   "celery>=5.5.0",
   "python-dotenv>=1.1.0",
   "orjson>=3.10.0",
+  "openpyxl>=3.1.0",
 ]
 
 [project.optional-dependencies]
@@ -47,3 +48,4 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B"]
+ignore = ["B008"]
