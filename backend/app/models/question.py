@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, ForeignKey, Integer, SmallInteger, String, Text
+from sqlalchemy import JSON, Boolean, ForeignKey, Integer, Numeric, SmallInteger, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
+    from app.models.auth import User
     from app.models.dictionary import Catalog, Grade, KnowledgePoint, QuestionType, Subject
-    from app.models.imports import DataSource
+    from app.models.imports import DataSource, SourceQuestionRecord
 
 
 class Question(TimestampMixin, Base):
@@ -41,6 +43,10 @@ class Question(TimestampMixin, Base):
         back_populates="question"
     )
     catalogs: Mapped[list["QuestionCatalog"]] = relationship(back_populates="question")
+    dedup_features: Mapped[list["QuestionDedupFeature"]] = relationship(back_populates="question")
+    duplicate_candidates: Mapped[list["QuestionDuplicateCandidate"]] = relationship(
+        back_populates="candidate_question"
+    )
 
 
 class QuestionContent(TimestampMixin, Base):
@@ -106,3 +112,42 @@ class QuestionCatalog(Base):
 
     question: Mapped["Question"] = relationship(back_populates="catalogs")
     catalog: Mapped["Catalog"] = relationship("Catalog")
+
+
+class QuestionDedupFeature(TimestampMixin, Base):
+    __tablename__ = "question_dedup_features"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    question_id: Mapped[int] = mapped_column(ForeignKey("questions.id"), nullable=False)
+    normalized_stem_text: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_answer_text: Mapped[str | None] = mapped_column(Text)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    stem_hash: Mapped[str | None] = mapped_column(String(64))
+    answer_hash: Mapped[str | None] = mapped_column(String(64))
+    dedup_version: Mapped[str] = mapped_column(String(32), default="v1", nullable=False)
+
+    question: Mapped["Question"] = relationship(back_populates="dedup_features")
+
+
+class QuestionDuplicateCandidate(TimestampMixin, Base):
+    __tablename__ = "question_duplicate_candidates"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    source_record_id: Mapped[int] = mapped_column(
+        ForeignKey("source_question_records.id"),
+        nullable=False,
+    )
+    candidate_question_id: Mapped[int] = mapped_column(ForeignKey("questions.id"), nullable=False)
+    match_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    confidence_score: Mapped[Decimal] = mapped_column(
+        Numeric(5, 4),
+        nullable=False,
+    )
+    comparison_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    review_status: Mapped[str] = mapped_column(String(32), default="PENDING", nullable=False)
+    reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    reviewed_at: Mapped[datetime | None] = mapped_column()
+
+    source_record: Mapped["SourceQuestionRecord"] = relationship("SourceQuestionRecord")
+    candidate_question: Mapped["Question"] = relationship(back_populates="duplicate_candidates")
+    reviewer: Mapped["User | None"] = relationship("User")
