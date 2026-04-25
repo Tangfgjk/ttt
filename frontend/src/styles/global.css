@@ -1,0 +1,139 @@
+:root {
+  color: #12312a;
+  background:
+    radial-gradient(circle at top left, rgba(15, 118, 110, 0.18), transparent 30%),
+    radial-gradient(circle at right center, rgba(194, 120, 3, 0.12), transparent 26%),
+    #f3efe6;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  min-height: 100vh;
+}
+
+.app-shell {
+  min-height: 100vh;
+  background: transparent;
+}
+
+.app-shell__sider {
+  border-right: 1px solid rgba(18, 49, 42, 0.08);
+  background: rgba(255, 253, 248, 0.88) !important;
+  backdrop-filter: blur(18px);
+}
+
+.app-shell__header {
+  height: auto;
+  padding: 24px 28px;
+  background: transparent;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.app-shell__content {
+  padding: 0 28px 28px;
+}
+
+.brand-block {
+  padding: 24px 20px 18px;
+}
+
+.brand-block__eyebrow,
+.login-hero__eyebrow {
+  color: #0f766e;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.brand-block__title,
+.page-title,
+.login-hero__title {
+  margin-bottom: 8px !important;
+}
+
+.brand-block__desc,
+.login-hero__desc {
+  color: rgba(18, 49, 42, 0.72);
+}
+
+.page-title {
+  margin-top: 0 !important;
+}
+
+.hero-panel,
+.login-card {
+  box-shadow: 0 22px 48px rgba(18, 49, 42, 0.08);
+}
+
+.login-page {
+  min-height: 100vh;
+  padding: 48px 24px;
+  display: flex;
+  align-items: center;
+  background:
+    linear-gradient(135deg, rgba(255, 253, 248, 0.88), rgba(238, 247, 245, 0.88)),
+    #f3efe6;
+}
+
+.login-hero {
+  padding: 16px 8px 16px 0;
+}
+
+.hero-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.08);
+  color: #0f766e;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.matrix-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(18, 49, 42, 0.08);
+}
+
+.matrix-row:last-child {
+  border-bottom: 0;
+}
+
+@media (max-width: 1279px) {
+  .app-shell__header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+@media (max-width: 767px) {
+  .app-shell__content {
+    padding: 0 16px 16px;
+  }
+
+  .login-page {
+    padding: 24px 16px;
+  }
+}

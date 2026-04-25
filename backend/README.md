@@ -76,6 +76,7 @@ uvicorn app.main:app --reload
 ## 当前可用接口
 
 - `GET /api/v1/system/health`
+- `POST /api/v1/auth/login`
 - `GET /api/v1/dictionaries/subjects`
 - `GET /api/v1/dictionaries/grades`
 - `GET /api/v1/dictionaries/question-types`
