@@ -9,6 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
+    from app.models.question import Question
     from app.models.question import QuestionExternalRef
 
 
@@ -59,9 +60,11 @@ class SourceQuestionRecord(Base):
     record_type: Mapped[str] = mapped_column(String(32), nullable=False)
     raw_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     normalized_hash: Mapped[str | None] = mapped_column(String(64))
+    normalized_question_id: Mapped[int | None] = mapped_column(ForeignKey("questions.id"))
     parse_status: Mapped[str] = mapped_column(String(32), nullable=False)
     error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     import_batch: Mapped["ImportBatch"] = relationship(back_populates="source_records")
     data_source: Mapped["DataSource"] = relationship(back_populates="source_records")
+    normalized_question: Mapped["Question | None"] = relationship("Question")

@@ -3,6 +3,7 @@ import { createBrowserRouter } from "react-router-dom";
 import { AppShell } from "@/layouts/AppShell";
 import { AdminPage } from "@/pages/admin";
 import { AnnotatePage } from "@/pages/annotate";
+import { DedupReviewPage } from "@/pages/dedup-review";
 import { HomePage } from "@/pages/home";
 import { ImportsPage } from "@/pages/imports";
 import { LoginPage } from "@/pages/login";
@@ -43,6 +44,15 @@ export const router = createBrowserRouter([
           {
             path: "visualization",
             element: <VisualizationPage />,
+          },
+          {
+            element: <RequireRole allowedRoles={["admin", "reviewer"]} />,
+            children: [
+              {
+                path: "dedup-review",
+                element: <DedupReviewPage />,
+              },
+            ],
           },
           {
             element: <RequireRole allowedRoles={["admin"]} />,

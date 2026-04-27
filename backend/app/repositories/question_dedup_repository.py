@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from sqlalchemy import Select, or_, select
-from sqlalchemy.orm import Session, joinedload
+from datetime import datetime
 
+from sqlalchemy import Select, or_, select
+from sqlalchemy.orm import Session, joinedload, selectinload
+
+from app.models.auth import User
+from app.models.imports import SourceQuestionRecord
 from app.models.question import (
     Question,
     QuestionDedupFeature,
@@ -121,6 +125,88 @@ class QuestionDedupRepository:
         self.db.add(candidate)
         self.db.flush()
         return candidate
+
+    def list_duplicate_candidates(
+        self,
+        *,
+        review_status: str | None = "PENDING",
+        limit: int = 100,
+    ) -> list[QuestionDuplicateCandidate]:
+        stmt = (
+            select(QuestionDuplicateCandidate)
+            .options(
+                joinedload(QuestionDuplicateCandidate.source_record).joinedload(
+                    SourceQuestionRecord.import_batch
+                ),
+                joinedload(QuestionDuplicateCandidate.source_record).joinedload(
+                    SourceQuestionRecord.data_source
+                ),
+                joinedload(QuestionDuplicateCandidate.candidate_question).joinedload(
+                    Question.content
+                ),
+                joinedload(QuestionDuplicateCandidate.reviewer),
+            )
+            .order_by(
+                QuestionDuplicateCandidate.review_status.asc(),
+                QuestionDuplicateCandidate.id.asc(),
+            )
+            .limit(limit)
+        )
+        if review_status:
+            stmt = stmt.where(QuestionDuplicateCandidate.review_status == review_status)
+        return list(self.db.scalars(stmt).unique())
+
+    def get_duplicate_candidate(self, candidate_id: int) -> QuestionDuplicateCandidate | None:
+        stmt = (
+            select(QuestionDuplicateCandidate)
+            .options(
+                joinedload(QuestionDuplicateCandidate.source_record).joinedload(
+                    SourceQuestionRecord.data_source
+                ),
+                joinedload(QuestionDuplicateCandidate.candidate_question).joinedload(
+                    Question.content
+                ),
+            )
+            .where(QuestionDuplicateCandidate.id == candidate_id)
+            .limit(1)
+        )
+        return self.db.scalar(stmt)
+
+    def get_user_by_id(self, user_id: int) -> User | None:
+        stmt = select(User).where(User.id == user_id).limit(1)
+        return self.db.scalar(stmt)
+
+    def list_source_record_candidates(self, source_record_id: int) -> list[QuestionDuplicateCandidate]:
+        stmt = (
+            select(QuestionDuplicateCandidate)
+            .options(selectinload(QuestionDuplicateCandidate.reviewer))
+            .where(QuestionDuplicateCandidate.source_record_id == source_record_id)
+        )
+        return list(self.db.scalars(stmt))
+
+    def save_duplicate_candidate(self, candidate: QuestionDuplicateCandidate) -> QuestionDuplicateCandidate:
+        self.db.add(candidate)
+        self.db.flush()
+        return candidate
+
+    def mark_related_candidates(
+        self,
+        *,
+        source_record_id: int,
+        winner_candidate_id: int,
+        reviewed_by: int,
+        reviewed_at: datetime,
+        winner_status: str,
+        loser_status: str = "DISMISSED",
+    ) -> None:
+        for item in self.list_source_record_candidates(source_record_id):
+            if item.id == winner_candidate_id:
+                item.review_status = winner_status
+            else:
+                item.review_status = loser_status
+            item.reviewed_by = reviewed_by
+            item.reviewed_at = reviewed_at
+        self.db.flush()
 
     def _feature_query(self) -> Select[tuple[QuestionDedupFeature]]:
         return select(QuestionDedupFeature).join(

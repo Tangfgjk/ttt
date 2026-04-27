@@ -87,6 +87,9 @@ uvicorn app.main:app --reload
 - `GET /api/v1/questions/{question_id}`
 - `GET /api/v1/imports/batches`
 - `POST /api/v1/imports/run-local`
+- `GET /api/v1/dedup-review/candidates`
+- `POST /api/v1/dedup-review/candidates/{candidate_id}/approve`
+- `POST /api/v1/dedup-review/candidates/{candidate_id}/reject`
 
 ## import 模块说明
 
@@ -122,3 +125,84 @@ uvicorn app.main:app --reload
 - `python -m pytest -q` 通过
 - `python -m ruff check app tests` 通过
 - 应用入口 `from app.main import app` 可正常导入
+## 2026-04-27 更新
+
+本轮新增了导入中心第一版正式链路：
+
+- `POST /api/v1/imports/upload`
+  - 支持通过 `multipart/form-data` 上传单个文件
+- `GET /api/v1/imports/batches/{batch_id}`
+  - 查看批次摘要和每条源记录结果
+
+当前 `dataset2_question_json` 已经接入：
+
+- 原始记录落表
+- 归一化写入 `questions / question_contents / question_external_refs`
+- `question_knowledge_points / question_catalogs` 关联补充
+- `QuestionDedupService` 判重
+
+当前导入归一化已覆盖 3 类数据：
+
+- `dataset2_question_json`
+  - 归一化进入 `questions / question_contents / question_external_refs`
+  - 追加 `question_knowledge_points / question_catalogs`
+  - 正式接入 `QuestionDedupService`
+
+- `dataset1_labeled`
+  - 归一化进入 `question_gold_labels / question_gold_competencies`
+  - 会优先尝试按统一题池中的题干精确匹配已有题目
+
+- `dataset3_exam_sheet`
+  - 归一化进入 `exams / exam_questions / students / student_exam_scores / student_question_responses`
+  - 会先尝试把题目匹配到统一题池，再挂考试作答行为
+
+运行导入上传接口前，请确保：
+
+- 已安装 `python-multipart`
+- 已安装 `cryptography`
+- 已执行 `alembic upgrade head`
+
+## 当前支持的导入文件形式
+
+### `dataset2_question_json`
+
+支持：
+
+- 单个题目对象 JSON
+- 题目对象数组 JSON
+
+要求：
+
+- 每条记录必须包含 `exerciseID`
+- 推荐同时包含 `question`、`queAns`、`solution`、`subjectCategory`、`gradeIndex`、`exerciseType`
+
+不支持：
+
+- `jsonl`
+- 顶层不是对象或数组的自定义包裹 JSON
+
+### `dataset1_labeled`
+
+支持：
+
+- `.xlsx`
+- 第一张工作表为数据表
+- 双行表头结构
+
+用途：
+
+- 导入金标准标签
+- 归一化进入 `question_gold_labels / question_gold_competencies`
+
+### `dataset3_exam_sheet`
+
+支持：
+
+- `.xlsx`
+- 第一张工作表为数据表
+- 单行字段表头
+
+用途：
+
+- 导入考试、学生、作答行为数据
+- 归一化进入 `exams / exam_questions / students / student_exam_scores / student_question_responses`

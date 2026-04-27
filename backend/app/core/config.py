@@ -40,6 +40,10 @@ class Settings(BaseSettings):
         default="redis://127.0.0.1:6379/2",
         alias="CELERY_RESULT_BACKEND",
     )
+    import_upload_dir: str = Field(
+        default="uploads/imports",
+        alias="IMPORT_UPLOAD_DIR",
+    )
 
 
 @lru_cache

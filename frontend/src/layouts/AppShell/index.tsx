@@ -4,20 +4,11 @@ import {
   ExperimentOutlined,
   ImportOutlined,
   LogoutOutlined,
+  SafetyCertificateOutlined,
   SearchOutlined,
   TeamOutlined,
 } from "@ant-design/icons";
-import {
-  Avatar,
-  Badge,
-  Button,
-  Input,
-  Layout,
-  Menu,
-  Space,
-  Tag,
-  Typography,
-} from "antd";
+import { Avatar, Badge, Button, Input, Layout, Menu, Space, Tag, Typography } from "antd";
 import type { ReactNode } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 
@@ -35,6 +26,7 @@ type MenuItem = {
 const menuItems: MenuItem[] = [
   { key: "/workspace", icon: <AppstoreOutlined />, label: "我的工作台", roles: ["annotator", "reviewer"] },
   { key: "/annotate", icon: <TeamOutlined />, label: "标注工作台", roles: ["annotator", "reviewer"] },
+  { key: "/dedup-review", icon: <SafetyCertificateOutlined />, label: "判重复核", roles: ["admin", "reviewer"] },
   { key: "/questions", icon: <SearchOutlined />, label: "统一题池", roles: ["admin", "annotator", "reviewer"] },
   { key: "/visualization", icon: <BarChartOutlined />, label: "可视化", roles: ["admin", "annotator", "reviewer"] },
   { key: "/admin/overview", icon: <AppstoreOutlined />, label: "项目总览", roles: ["admin"] },
