@@ -5,6 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from shutil import copyfileobj
+from typing import Iterable
 from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile, status
@@ -120,6 +121,89 @@ class ImportService:
             file_path=upload_path,
         )
 
+    def import_uploaded_files(
+        self,
+        data_source_code: str,
+        uploads: list[UploadFile],
+        *,
+        folder_name: str | None = None,
+    ) -> ImportExecutionResult:
+        if not uploads:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No files were uploaded.",
+            )
+
+        data_source, importer_cls = self._resolve_source_and_importer(data_source_code)
+        display_name = self._resolve_multi_file_display_name(folder_name, uploads)
+        batch = self._create_batch(data_source=data_source, file_name=display_name)
+        upload_paths = [
+            self._persist_uploaded_file(batch.batch_no, upload.filename or f"upload_{index}.bin", upload)
+            for index, upload in enumerate(uploads, start=1)
+        ]
+        return self._execute_batch_files(
+            data_source=data_source,
+            importer_cls=importer_cls,
+            batch=batch,
+            file_paths=upload_paths,
+            finalize=True,
+        )
+
+    def initialize_upload_batch(
+        self,
+        data_source_code: str,
+        *,
+        file_name: str,
+    ) -> ImportBatch:
+        data_source, _ = self._resolve_source_and_importer(data_source_code)
+        batch = self._create_batch(data_source=data_source, file_name=file_name)
+        self.db.commit()
+        self.db.refresh(batch)
+        return batch
+
+    def append_uploaded_files_to_batch(
+        self,
+        batch_id: int,
+        uploads: list[UploadFile],
+        *,
+        finalize: bool = False,
+    ) -> ImportExecutionResult:
+        if not uploads:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No files were uploaded.",
+            )
+
+        batch = self.repository.get_batch_by_id(batch_id)
+        if batch is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Import batch not found.",
+            )
+        if batch.import_status != "RUNNING":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Import batch is not accepting more files.",
+            )
+        if batch.data_source is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Import batch data source is missing.",
+            )
+
+        _, importer_cls = self._resolve_source_and_importer(batch.data_source.code)
+        upload_paths = [
+            self._persist_uploaded_file(batch.batch_no, upload.filename or f"upload_{index}.bin", upload)
+            for index, upload in enumerate(uploads, start=1)
+        ]
+        return self._execute_batch_files(
+            data_source=batch.data_source,
+            importer_cls=importer_cls,
+            batch=batch,
+            file_paths=upload_paths,
+            finalize=finalize,
+        )
+
     def attach_source_record_to_existing_question(
         self,
         source_record: SourceQuestionRecord,
@@ -222,30 +306,75 @@ class ImportService:
         batch: ImportBatch,
         file_path: Path,
     ) -> ImportExecutionResult:
+        return self._execute_batch_files(
+            data_source=data_source,
+            importer_cls=importer_cls,
+            batch=batch,
+            file_paths=[file_path],
+            finalize=True,
+        )
+
+    def _execute_batch_files(
+        self,
+        *,
+        data_source: DataSource,
+        importer_cls: type[BaseImporter],
+        batch: ImportBatch,
+        file_paths: Iterable[Path],
+        finalize: bool,
+    ) -> ImportExecutionResult:
         importer = importer_cls()
         try:
-            parsed_records = importer.parse(file_path)
-            source_records = [
-                SourceQuestionRecord(
-                    import_batch_id=batch.id,
-                    data_source_id=data_source.id,
-                    source_record_key=item["source_record_key"],
-                    record_type=importer.record_type,
-                    raw_payload=make_json_safe(item["raw_payload"]),
-                    parse_status="RAW_IMPORTED",
-                )
-                for item in parsed_records
-            ]
+            source_records: list[SourceQuestionRecord] = []
+
+            for file_path in file_paths:
+                try:
+                    parsed_records = importer.parse(file_path)
+                    source_records.extend(
+                        [
+                            SourceQuestionRecord(
+                                import_batch_id=batch.id,
+                                data_source_id=data_source.id,
+                                source_record_key=item["source_record_key"],
+                                record_type=importer.record_type,
+                                raw_payload=make_json_safe(item["raw_payload"]),
+                                parse_status="RAW_IMPORTED",
+                            )
+                            for item in parsed_records
+                        ]
+                    )
+                except Exception as exc:
+                    source_records.append(
+                        SourceQuestionRecord(
+                            import_batch_id=batch.id,
+                            data_source_id=data_source.id,
+                            source_record_key=self._trim_source_record_key(file_path.name),
+                            record_type=importer.record_type,
+                            raw_payload=make_json_safe(
+                                {
+                                    "source_file_name": file_path.name,
+                                }
+                            ),
+                            parse_status="FAILED",
+                            error_message=f"Failed to parse file {file_path.name}: {exc}",
+                        )
+                    )
+
             self.repository.add_source_records(source_records)
 
             for source_record in source_records:
+                if source_record.parse_status == "FAILED":
+                    continue
                 self._normalize_source_record(data_source, source_record)
 
-            batch.total_records = len(source_records)
-            batch.failed_records = sum(1 for item in source_records if item.parse_status == "FAILED")
-            batch.success_records = batch.total_records - batch.failed_records
-            batch.import_status = self._resolve_batch_status(batch)
-            batch.finished_at = datetime.utcnow()
+            chunk_total = len(source_records)
+            chunk_failed = sum(1 for item in source_records if item.parse_status == "FAILED")
+            chunk_success = chunk_total - chunk_failed
+            batch.total_records += chunk_total
+            batch.failed_records += chunk_failed
+            batch.success_records += chunk_success
+            batch.import_status = self._resolve_batch_status(batch) if finalize else "RUNNING"
+            batch.finished_at = datetime.utcnow() if finalize else None
             self.db.commit()
             self.db.refresh(batch)
             return ImportExecutionResult(
@@ -312,6 +441,22 @@ class ImportService:
         with target_path.open("wb") as buffer:
             copyfileobj(upload.file, buffer)
         return target_path
+
+    def _resolve_multi_file_display_name(
+        self,
+        folder_name: str | None,
+        uploads: list[UploadFile],
+    ) -> str:
+        clean_folder_name = (folder_name or "").strip()
+        if clean_folder_name:
+            return f"{clean_folder_name} ({len(uploads)} files)"
+        if len(uploads) == 1:
+            return uploads[0].filename or "upload.bin"
+        return f"multi-file-upload ({len(uploads)} files)"
+
+    @staticmethod
+    def _trim_source_record_key(value: str) -> str:
+        return value[:128]
 
     def _uploads_dir(self) -> Path:
         configured = getattr(self.settings, "import_upload_dir", None)
@@ -858,6 +1003,9 @@ class ImportService:
             school_code=school_code,
         )
         if catalog is not None:
+            if not catalog.school_code and school_code:
+                catalog.school_code = school_code
+                self.repository.save_catalog(catalog)
             return catalog
 
         return self.repository.save_catalog(

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+from io import BytesIO
 from pathlib import Path
 
+from fastapi import UploadFile
 from openpyxl import Workbook
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -266,6 +268,210 @@ def test_dataset2_import_matches_by_content_hash_for_new_external_id(tmp_path: P
 
     refs = list(db.scalars(select(QuestionExternalRef).order_by(QuestionExternalRef.id.asc())))
     assert len(refs) == 2
+
+
+def test_dataset2_folder_import_merges_multiple_json_files_into_one_batch() -> None:
+    db = _build_session()
+    _seed_import_context(db)
+    service = ImportService(db)
+
+    payload_one = {
+        "exerciseID": "FOLDER_001",
+        "baseTypeIndex": 1,
+        "blankCount": 0,
+        "difficulty": 1,
+        "exerciseType": "select_single",
+        "gradeIndex": 8,
+        "question": "已知一次函数 y=2x+3，当 x=2 时函数值是多少？",
+        "queAns": "7",
+        "solution": "将 x=2 代入即可。",
+        "subQueNum": 0,
+        "subQues": [],
+        "subjectCategory": "math",
+        "tags": [],
+        "queCtlgs": [],
+    }
+    payload_two = {
+        "exerciseID": "FOLDER_002",
+        "baseTypeIndex": 1,
+        "blankCount": 0,
+        "difficulty": 1,
+        "exerciseType": "select_single",
+        "gradeIndex": 8,
+        "question": "已知一次函数 y=2x+3，当 x=2 时函数值是多少？",
+        "queAns": "7",
+        "solution": "将 x=2 代入即可。",
+        "subQueNum": 0,
+        "subQues": [],
+        "subjectCategory": "math",
+        "tags": [],
+        "queCtlgs": [],
+    }
+
+    upload_one = UploadFile(
+        filename="folder_a.json",
+        file=BytesIO(json.dumps(payload_one, ensure_ascii=False).encode("utf-8")),
+    )
+    upload_two = UploadFile(
+        filename="folder_b.json",
+        file=BytesIO(json.dumps(payload_two, ensure_ascii=False).encode("utf-8")),
+    )
+
+    result = service.import_uploaded_files(
+        "dataset2_question_json",
+        [upload_one, upload_two],
+        folder_name="题目合并",
+    )
+    detail = service.get_batch_detail(result.batch.id)
+
+    assert detail.batch.file_name == "题目合并 (2 files)"
+    assert detail.summary.total_records == 2
+    assert detail.summary.created_new_question == 1
+    assert detail.summary.matched_by_content_hash == 1
+    assert detail.records[0].normalized_question_id == detail.records[1].normalized_question_id
+
+
+def test_dataset2_folder_import_can_append_chunks_to_same_batch() -> None:
+    db = _build_session()
+    _seed_import_context(db)
+    service = ImportService(db)
+
+    batch = service.initialize_upload_batch(
+        "dataset2_question_json",
+        file_name="题目合并 (2 files)",
+    )
+
+    first_payload = {
+        "exerciseID": "CHUNK_001",
+        "baseTypeIndex": 1,
+        "blankCount": 0,
+        "difficulty": 1,
+        "exerciseType": "select_single",
+        "gradeIndex": 8,
+        "question": "若 a+b=5，且 a=2，则 b 的值是多少？",
+        "queAns": "3",
+        "solution": "5-2=3。",
+        "subQueNum": 0,
+        "subQues": [],
+        "subjectCategory": "math",
+        "tags": [],
+        "queCtlgs": [],
+    }
+    second_payload = {
+        "exerciseID": "CHUNK_002",
+        "baseTypeIndex": 1,
+        "blankCount": 0,
+        "difficulty": 1,
+        "exerciseType": "select_single",
+        "gradeIndex": 8,
+        "question": "若 a+b=5，且 a=2，则 b 的值是多少？",
+        "queAns": "3",
+        "solution": "5-2=3。",
+        "subQueNum": 0,
+        "subQues": [],
+        "subjectCategory": "math",
+        "tags": [],
+        "queCtlgs": [],
+    }
+
+    first_upload = UploadFile(
+        filename="chunk_1.json",
+        file=BytesIO(json.dumps(first_payload, ensure_ascii=False).encode("utf-8")),
+    )
+    second_upload = UploadFile(
+        filename="chunk_2.json",
+        file=BytesIO(json.dumps(second_payload, ensure_ascii=False).encode("utf-8")),
+    )
+
+    first_result = service.append_uploaded_files_to_batch(batch.id, [first_upload], finalize=False)
+    first_detail = service.get_batch_detail(batch.id)
+    second_result = service.append_uploaded_files_to_batch(batch.id, [second_upload], finalize=True)
+    detail = service.get_batch_detail(batch.id)
+
+    assert first_result.summary.total_records == 1
+    assert first_detail.batch.import_status == "RUNNING"
+    assert second_result.batch.import_status == "SUCCESS"
+    assert detail.summary.total_records == 2
+    assert detail.summary.created_new_question == 1
+    assert detail.summary.matched_by_content_hash == 1
+
+
+def test_dataset2_import_reuses_catalog_when_school_code_differs(tmp_path: Path) -> None:
+    db = _build_session()
+    _seed_import_context(db)
+    service = ImportService(db)
+
+    file_path = tmp_path / "dataset2_catalog_reuse.json"
+    payload = [
+        {
+            "exerciseID": "CAT_001",
+            "baseTypeIndex": 1,
+            "blankCount": 0,
+            "difficulty": 1,
+            "exerciseType": "select_single",
+            "gradeIndex": 8,
+            "question": "已知 2+3 的结果是几？",
+            "queAns": "5",
+            "solution": "",
+            "subQueNum": 0,
+            "subQues": [],
+            "subjectCategory": "math",
+            "tags": [],
+            "queCtlgs": [
+                {
+                    "catalogId": "catalog_same",
+                    "queId": "CAT_001",
+                    "schCode": "3019",
+                    "textbookId": "textbook_same",
+                }
+            ],
+        },
+        {
+            "exerciseID": "CAT_002",
+            "baseTypeIndex": 1,
+            "blankCount": 0,
+            "difficulty": 1,
+            "exerciseType": "select_single",
+            "gradeIndex": 8,
+            "question": "已知 4+1 的结果是几？",
+            "queAns": "5",
+            "solution": "",
+            "subQueNum": 0,
+            "subQues": [],
+            "subjectCategory": "math",
+            "tags": [],
+            "queCtlgs": [
+                {
+                    "catalogId": "catalog_same",
+                    "queId": "CAT_002",
+                    "schCode": "3030",
+                    "textbookId": "textbook_same",
+                }
+            ],
+        },
+    ]
+    file_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    result = service.import_local_file("dataset2_question_json", str(file_path))
+    detail = service.get_batch_detail(result.batch.id)
+
+    assert detail.summary.failed == 0
+    assert detail.summary.total_records == 2
+
+
+def test_initialize_upload_batch_is_persisted_immediately() -> None:
+    db = _build_session()
+    _seed_import_context(db)
+    service = ImportService(db)
+
+    batch = service.initialize_upload_batch(
+        "dataset2_question_json",
+        file_name="题目合并 (10 files)",
+    )
+
+    reloaded = service.get_batch_detail(batch.id)
+    assert reloaded.batch.id == batch.id
+    assert reloaded.batch.import_status == "RUNNING"
 
 
 def test_dataset1_import_creates_gold_label(tmp_path: Path) -> None:

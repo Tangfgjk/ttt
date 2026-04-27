@@ -31,6 +31,7 @@ export type QuestionListItem = {
   } | null;
   content?: {
     stem_text: string;
+    stem_html?: string | null;
     answer_text?: string | null;
     solution_text?: string | null;
   } | null;
@@ -39,4 +40,47 @@ export type QuestionListItem = {
 export type QuestionListResponse = {
   items: QuestionListItem[];
   meta: PageMeta;
+};
+
+export type QuestionListParams = {
+  page?: number;
+  page_size?: number;
+  keyword?: string;
+  subject_id?: number;
+  grade_id?: number;
+  question_type_id?: number;
+  annotation_status?: string;
+  source_status?: string;
+};
+
+export type QuestionExternalRef = {
+  id: number;
+  external_question_id: string;
+  external_type?: string | null;
+  is_primary: boolean;
+  data_source_code: string;
+  data_source_name: string;
+};
+
+export type QuestionKnowledgePoint = {
+  id: number;
+  knowledge_point_id: number;
+  knowledge_point_name: string;
+  priority: number;
+  is_core: boolean;
+  is_exam_point: boolean;
+  is_last_exam_point: boolean;
+};
+
+export type QuestionCatalog = {
+  id: number;
+  catalog_id: number;
+  catalog_name: string;
+  school_code?: string | null;
+};
+
+export type QuestionDetail = QuestionListItem & {
+  external_refs: QuestionExternalRef[];
+  knowledge_points: QuestionKnowledgePoint[];
+  catalogs: QuestionCatalog[];
 };

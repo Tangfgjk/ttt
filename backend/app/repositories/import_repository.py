@@ -116,10 +116,6 @@ class ImportRepository:
             stmt = stmt.where(Catalog.textbook_id.is_(None))
         else:
             stmt = stmt.where(Catalog.textbook_id == textbook_id)
-        if school_code is None:
-            stmt = stmt.where(Catalog.school_code.is_(None))
-        else:
-            stmt = stmt.where(Catalog.school_code == school_code)
         return self.db.scalar(stmt)
 
     def save_catalog(self, catalog: Catalog) -> Catalog:

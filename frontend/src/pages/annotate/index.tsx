@@ -17,7 +17,7 @@ const competencyRows = [
 ];
 
 export function AnnotatePage() {
-  const { data, isLoading } = useQuestionList();
+  const { data, isLoading } = useQuestionList({ page: 1, page_size: 20 });
   const activeQuestion = data?.items[0];
 
   return (

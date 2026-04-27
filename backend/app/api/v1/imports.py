@@ -54,3 +54,62 @@ async def upload_import_file(
         summary=batch.summary,
         imported_records=result.imported_records,
     )
+
+
+@router.post("/upload-folder", response_model=ImportRunResponse)
+async def upload_import_folder(
+    data_source_code: str = Form(...),
+    folder_name: str | None = Form(default=None),
+    files: list[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+) -> ImportRunResponse:
+    service = ImportService(db)
+    result = service.import_uploaded_files(
+        data_source_code,
+        files,
+        folder_name=folder_name,
+    )
+    batch = service.get_batch_detail(result.batch.id)
+    return ImportRunResponse(
+        batch=batch.batch,
+        summary=batch.summary,
+        imported_records=result.imported_records,
+    )
+
+
+@router.post("/upload-folder/init", response_model=ImportBatchOut)
+async def initialize_import_folder_upload(
+    data_source_code: str = Form(...),
+    folder_name: str | None = Form(default=None),
+    file_count: int | None = Form(default=None),
+    db: Session = Depends(get_db),
+) -> ImportBatchOut:
+    service = ImportService(db)
+    clean_name = folder_name.strip() if folder_name else "folder-upload"
+    display_name = f"{clean_name} ({file_count} files)" if file_count else clean_name
+    batch = service.initialize_upload_batch(
+        data_source_code,
+        file_name=display_name,
+    )
+    return service.serialize_batch(batch)
+
+
+@router.post("/batches/{batch_id}/upload-chunk", response_model=ImportRunResponse)
+async def upload_import_batch_chunk(
+    batch_id: int,
+    finalize: bool = Form(default=False),
+    files: list[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+) -> ImportRunResponse:
+    service = ImportService(db)
+    result = service.append_uploaded_files_to_batch(
+        batch_id,
+        files,
+        finalize=finalize,
+    )
+    batch = service.get_batch_detail(result.batch.id)
+    return ImportRunResponse(
+        batch=batch.batch,
+        summary=batch.summary,
+        imported_records=result.imported_records,
+    )
