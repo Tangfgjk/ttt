@@ -11,3 +11,17 @@ export type GradeItem = {
   grade_name: string;
   edu_stage?: string | null;
 };
+
+export type CognitiveLevelItem = {
+  id: number;
+  code: string;
+  name: string;
+  level_order: number;
+};
+
+export type CompetencyItem = {
+  id: number;
+  code: string;
+  name: string;
+  display_order: number;
+};

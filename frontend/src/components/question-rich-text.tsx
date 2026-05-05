@@ -21,6 +21,14 @@ function looksLikeHtml(value: string) {
   return /<\/?[a-z][\s\S]*>/i.test(value);
 }
 
+function linkifyImageUrls(value: string) {
+  const imageUrlPattern = /(https?:\/\/[^\s<>"']+\.(?:png|jpe?g|gif|webp|svg)(?:\?[^\s<>"']*)?)/gi;
+  return value.replace(
+    imageUrlPattern,
+    (url) => `<img src="${url}" alt="题目图片" loading="lazy" />`,
+  );
+}
+
 function buildMarkup(html?: string | null, text?: string | null) {
   if (html?.trim()) {
     return html;
@@ -34,7 +42,7 @@ function buildMarkup(html?: string | null, text?: string | null) {
     return text;
   }
 
-  return escapeHtml(text).replace(/\n/g, "<br />");
+  return linkifyImageUrls(escapeHtml(text)).replace(/\n/g, "<br />");
 }
 
 export function QuestionRichText({

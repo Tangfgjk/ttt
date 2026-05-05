@@ -1,6 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 
-import { getGrades, getQuestionTypes, getSubjects } from "@/services/dictionaries";
+import {
+  getCognitiveLevels,
+  getCompetencies,
+  getGrades,
+  getQuestionTypes,
+  getSubjects,
+} from "@/services/dictionaries";
 import { getQuestionDetail, getQuestionList } from "@/services/questions";
 import type { QuestionListParams } from "@/types/question";
 
@@ -47,6 +53,22 @@ export function useQuestionTypes() {
   return useQuery({
     queryKey: ["dictionaries", "question-types"],
     queryFn: getQuestionTypes,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useCognitiveLevels() {
+  return useQuery({
+    queryKey: ["dictionaries", "cognitive-levels"],
+    queryFn: getCognitiveLevels,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useCompetencies() {
+  return useQuery({
+    queryKey: ["dictionaries", "competencies"],
+    queryFn: getCompetencies,
     staleTime: 5 * 60 * 1000,
   });
 }
