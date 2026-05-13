@@ -14,6 +14,7 @@ import {
 } from "antd";
 import { useState } from "react";
 
+import { usePageHashScroll } from "@/app/use-page-hash-scroll";
 import { useAuthStore } from "@/app/store/auth-store";
 import {
   useApproveDuplicateCandidate,
@@ -28,6 +29,8 @@ function toScore(value: string | number) {
 }
 
 export function DedupReviewPage() {
+  usePageHashScroll();
+
   const session = useAuthStore((state) => state.session);
   const [bulkThreshold, setBulkThreshold] = useState(0.9);
   const { data, isLoading } = useDuplicateReviewCandidates();
@@ -87,7 +90,7 @@ export function DedupReviewPage() {
 
   return (
     <Space direction="vertical" size={20} style={{ width: "100%" }}>
-      <Card>
+      <Card id="dedup-summary" className="page-section-anchor">
         <Typography.Title level={3} style={{ marginTop: 0 }}>
           疑似重复人工复核
         </Typography.Title>
@@ -116,7 +119,7 @@ export function DedupReviewPage() {
       </Row>
 
       {session?.role === "admin" ? (
-        <Card>
+        <Card id="dedup-bulk" className="page-section-anchor">
           <Space direction="vertical" size={12} style={{ width: "100%" }}>
             <Typography.Text strong>批量确认重复</Typography.Text>
             <Typography.Text type="secondary">
@@ -166,7 +169,7 @@ export function DedupReviewPage() {
           <Empty description="当前没有待复核的疑似重复题。" />
         </Card>
       ) : (
-        <Space direction="vertical" size={16} style={{ width: "100%" }}>
+        <Space id="dedup-candidates" direction="vertical" size={16} style={{ width: "100%" }} className="page-section-anchor">
           {candidates.map((item) => (
             <Card key={item.candidate_id}>
               <Space direction="vertical" size={16} style={{ width: "100%" }}>

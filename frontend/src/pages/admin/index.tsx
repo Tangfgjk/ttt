@@ -29,6 +29,7 @@ import type { AxiosError } from "axios";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+import { usePageHashScroll } from "@/app/use-page-hash-scroll";
 import { useAuthStore } from "@/app/store/auth-store";
 import {
   useActiveLearningOverview,
@@ -100,6 +101,8 @@ function readStoredIncludeGoldLabels() {
 }
 
 export function AdminPage() {
+  usePageHashScroll();
+
   const navigate = useNavigate();
   const { token } = theme.useToken();
   const session = useAuthStore((state) => state.session);
@@ -578,6 +581,8 @@ export function AdminPage() {
       <Row gutter={[16, 16]} align="stretch">
         <Col xs={24} xl={14}>
           <Card
+            id="admin-training"
+            className="page-section-anchor"
             style={{ height: "100%", boxShadow: token.boxShadowTertiary }}
             title={
               <Space>
@@ -760,8 +765,15 @@ export function AdminPage() {
         </Col>
 
         <Col xs={24} xl={10}>
-          <Space direction="vertical" size={16} style={{ width: "100%" }}>
+          <Space
+            className="admin-selection-stack"
+            direction="vertical"
+            size={16}
+            style={{ width: "100%" }}
+          >
             <Card
+              id="admin-prediction"
+              className="page-section-anchor"
               style={{ boxShadow: token.boxShadowTertiary }}
               title={
                 <Space>
@@ -872,6 +884,8 @@ export function AdminPage() {
             </Card>
 
             <Card
+              id="admin-coreset"
+              className="page-section-anchor"
               style={{ boxShadow: token.boxShadowTertiary }}
               title={
                 <Space>
@@ -887,7 +901,7 @@ export function AdminPage() {
                 requiredMark={false}
                 initialValues={{
                   strategy: "kmeans",
-                  count: 100,
+                  count: 400,
                   data_scope: "pending",
                   update_mode: "full",
                 }}

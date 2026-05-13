@@ -182,7 +182,7 @@ class PredictionRunOut(BaseModel):
 class CoresetRunCreateRequest(BaseModel):
     triggered_by_user_id: int | None = None
     strategy: SelectionStrategy = "kmeans"
-    count: int = Field(default=100, ge=1, le=5000)
+    count: int = Field(default=400, ge=1, le=5000)
     data_scope: SelectionDataScope = "pending"
     update_mode: CoresetUpdateMode = "full"
 

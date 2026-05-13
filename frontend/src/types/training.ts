@@ -80,6 +80,18 @@ export type TrainingQuestionResult = {
   is_passed: boolean;
   expected_competency_names: string[];
   predicted_competency_names: string[];
+  competency_results: TrainingQuestionCompetencyResult[];
+};
+
+export type TrainingQuestionCompetencyResult = {
+  competency_id: number;
+  competency_name: string;
+  expected_level: number;
+  selected_level: number;
+  is_match: boolean;
+  definition: string;
+  focus_tip: string;
+  level_reason: string;
 };
 
 export type TrainingSubmitResponse = {
@@ -88,6 +100,16 @@ export type TrainingSubmitResponse = {
   score_percent: number;
   pass_threshold: number;
   training_scope: TrainingScope;
+  attempt_no: number;
+  completed_at: string;
+  question_results: TrainingQuestionResult[];
+};
+
+export type TrainingAttemptResponse = {
+  stage: TrainingStage;
+  passed: boolean;
+  score_percent: number;
+  pass_threshold: number;
   attempt_no: number;
   completed_at: string;
   question_results: TrainingQuestionResult[];

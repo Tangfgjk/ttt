@@ -88,6 +88,18 @@ class TrainingQuestionResult(BaseModel):
     is_passed: bool
     expected_competency_names: list[str]
     predicted_competency_names: list[str]
+    competency_results: list["TrainingQuestionCompetencyResult"] = Field(default_factory=list)
+
+
+class TrainingQuestionCompetencyResult(BaseModel):
+    competency_id: int
+    competency_name: str
+    expected_level: int = Field(ge=0, le=3)
+    selected_level: int = Field(ge=0, le=3)
+    is_match: bool
+    definition: str
+    focus_tip: str
+    level_reason: str
 
 
 class TrainingSubmitResponse(BaseModel):
@@ -96,6 +108,16 @@ class TrainingSubmitResponse(BaseModel):
     score_percent: float
     pass_threshold: int
     training_scope: TrainingScope
+    attempt_no: int
+    completed_at: datetime
+    question_results: list[TrainingQuestionResult]
+
+
+class TrainingAttemptResponse(BaseModel):
+    stage: TrainingStage
+    passed: bool
+    score_percent: float
+    pass_threshold: int
     attempt_no: int
     completed_at: datetime
     question_results: list[TrainingQuestionResult]
