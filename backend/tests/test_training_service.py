@@ -105,6 +105,19 @@ def test_training_submit_updates_user_scope_when_answers_match_gold() -> None:
     assert result.passed is True
     assert result.training_scope == "senior"
     assert user.training_scope == "senior"
+    assert result.question_results[0].competency_results
+    matched_competency = next(
+        item for item in result.question_results[0].competency_results if item.expected_level > 0
+    )
+    assert matched_competency.expected_level == 1
+    assert matched_competency.selected_level == 1
+    assert matched_competency.level_reason
+
+    attempts = service.list_attempts(user.id, "senior")
+    assert len(attempts) == 1
+    assert attempts[0].attempt_no == result.attempt_no
+    assert attempts[0].passed is True
+    assert attempts[0].question_results[0].competency_results
 
 
 def test_training_module_includes_guide_examples_and_question_fields() -> None:

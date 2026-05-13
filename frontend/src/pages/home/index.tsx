@@ -6,6 +6,8 @@ import {
 } from "@ant-design/icons";
 import { Card, Col, List, Progress, Row, Space, Statistic, Tag, Typography } from "antd";
 
+import { usePageHashScroll } from "@/app/use-page-hash-scroll";
+
 const completedTimeline = [
   {
     stage: "V1",
@@ -15,38 +17,32 @@ const completedTimeline = [
   {
     stage: "V2",
     title: "导入链路与统一题池",
-    description:
-      "三类数据导入接通，统一题池支持筛选、分页、详情抽屉与来源映射查看。",
+    description: "三类数据导入接通，统一题池支持筛选、分页、详情抽屉与来源映射查看。",
   },
   {
     stage: "V3",
     title: "判重与人工复核",
-    description:
-      "自动判重、疑似重复人工复核、管理员按相似度批量确认重复等治理能力落地。",
+    description: "自动判重、疑似重复人工复核、管理员按相似度批量确认重复等治理能力落地。",
   },
   {
     stage: "V4.5",
     title: "嵌入可视化与题池联动",
-    description:
-      "试题嵌入补全、二维分布可视化、缓存优化与跳转统一题池联动已经接通。",
+    description: "试题嵌入补全、二维分布可视化、缓存优化与跳转统一题池联动已经接通。",
   },
   {
     stage: "V4.7",
     title: "主动学习训练闭环",
-    description:
-      "训练、模型版本、低置信度预测选题、CoreSet 选题、GPU worker 与可复现训练打通。",
+    description: "训练、模型版本、低置信度预测选题、CoreSet 选题、GPU worker 与可复现训练打通。",
   },
   {
     stage: "V4.8",
     title: "训练监控与治理能力",
-    description:
-      "训练监控页、趋势分组、模型版本治理、预测取消与真实 batch 级进度补齐。",
+    description: "训练监控页、趋势分组、模型版本治理、预测取消与真实 batch 级进度补齐。",
   },
   {
     stage: "V4.10",
     title: "题池回收与批次撤回",
-    description:
-      "系统管理员可查看各题池、统一回收待标注/领取中题目，并撤回某次 CoreSet 或低置信度选题批次。",
+    description: "系统管理员可查看各题池、统一回收待标注/领取中题目，并撤回某次 CoreSet 或低置信度选题批次。",
   },
 ];
 
@@ -58,51 +54,38 @@ const nextItems = [
 ];
 
 export function HomePage() {
+  usePageHashScroll();
+
   return (
     <Space direction="vertical" size={20} style={{ width: "100%" }}>
-      <Card className="hero-panel">
+      <Card id="overview-hero" className="hero-panel page-section-anchor">
         <Typography.Title level={2} style={{ marginTop: 0 }}>
           项目总览
         </Typography.Title>
         <Typography.Paragraph>
-          当前项目已经从早期“设计与底座搭建”推进到“主动学习训练闭环联调与治理优化”阶段。
-          统一题池、导入、判重、人工复核、试题嵌入可视化、训练监控和模型驱动选题已经形成一条可运行主链路，
+          当前项目已经从早期“设计与底座搭建”推进到“主动学习训练闭环联调与治理优化”阶段。统一题池、
+          导入、判重、人工复核、试题嵌入可视化、训练监控和模型驱动选题已经形成一条可运行主链路，
           V4 阶段已经基本收束，下一步将进入 V5，重点推进正式评估、性能优化与上线前治理。
         </Typography.Paragraph>
         <Progress percent={92} strokeColor="#0f766e" />
       </Card>
 
-      <Row gutter={[16, 16]}>
+      <Row id="overview-metrics" gutter={[16, 16]} className="page-section-anchor">
         <Col xs={24} md={8}>
           <Card>
-            <Statistic
-              title="当前阶段"
-              value="V4.10 治理收束"
-              prefix={<CheckCircleOutlined />}
-            />
+            <Statistic title="当前阶段" value="V5 治理完善" prefix={<CheckCircleOutlined />} />
           </Card>
         </Col>
         <Col xs={24} md={8}>
           <Card>
-            <Statistic
-              title="核心方向"
-              value="统一题池 + 主动学习 + 标注闭环"
-              prefix={<DatabaseOutlined />}
-            />
+            <Statistic title="核心方向" value="统一题池 + 主动学习 + 标注闭环" prefix={<DatabaseOutlined />} />
           </Card>
         </Col>
         <Col xs={24} md={8}>
           <Card>
-            <Statistic
-              title="下一关键动作"
-              value="稳定联调与正式评估"
-              prefix={<ForkOutlined />}
-            />
+            <Statistic title="下一关键动作" value="稳定联调与正式评估" prefix={<ForkOutlined />} />
           </Card>
         </Col>
-      </Row>
-
-      <Row gutter={[16, 16]}>
         <Col xs={24} lg={8}>
           <Card>
             <Statistic title="整体进度" value={92} suffix="%" prefix={<RadarChartOutlined />} />
@@ -121,7 +104,7 @@ export function HomePage() {
       </Row>
 
       <Row gutter={[16, 16]}>
-        <Col xs={24} xl={12}>
+        <Col id="overview-timeline" xs={24} xl={12} className="page-section-anchor">
           <Card title="已完成内容">
             <div className="project-timeline">
               {completedTimeline.map((item) => (
@@ -142,8 +125,9 @@ export function HomePage() {
             </div>
           </Card>
         </Col>
-        <Col xs={24} xl={12}>
-          <Card title="下一步待办">
+
+        <Col id="overview-next" xs={24} xl={12} className="page-section-anchor">
+          <Card title="下一步计划">
             <List
               dataSource={nextItems}
               renderItem={(item: string) => (

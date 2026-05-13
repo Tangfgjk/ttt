@@ -1,5 +1,5 @@
 import { InfoCircleOutlined } from "@ant-design/icons";
-import { Popover, Space, Tag, Typography } from "antd";
+import { Popover, Space, Typography } from "antd";
 
 type CompetencyHelpPopoverProps = {
   name: string;
@@ -20,14 +20,14 @@ export function CompetencyHelpPopover({
   focusTip,
 }: CompetencyHelpPopoverProps) {
   const content = (
-    <Space direction="vertical" size={10} style={{ maxWidth: 340 }}>
+    <Space direction="vertical" size={10} className="competency-help-popover">
       <div>
         <Typography.Text strong>{name}</Typography.Text>
         <Typography.Paragraph type="secondary" style={{ margin: "6px 0 0" }}>
           {definition || "暂未配置该素养的详细定义。"}
         </Typography.Paragraph>
       </div>
-      {focusTip ? <Tag color="processing">{focusTip}</Tag> : null}
+      {focusTip ? <div className="competency-help-popover__tip">{focusTip}</div> : null}
       <Space direction="vertical" size={6}>
         {LEVEL_HINTS.map((item) => (
           <Typography.Text key={item.level}>

@@ -17,10 +17,12 @@ from app.models.auth import User
 from app.models.dictionary import Competency, Grade
 from app.models.question import Question
 from app.schemas.training import (
+    TrainingAttemptResponse,
     TrainingCompetencyDefinition,
     TrainingGuideExampleCompetencyOut,
     TrainingGuideExampleOut,
     TrainingModuleResponse,
+    TrainingQuestionCompetencyResult,
     TrainingQuestionOut,
     TrainingQuestionResult,
     TrainingStage,
@@ -196,6 +198,7 @@ class TrainingService:
         module = self._build_training_question_models(payload.stage)
         stage_ids = self._stage_competency_id_set(payload.stage)
         stage_name_map = self._stage_competency_name_map(payload.stage)
+        stage_detail_map = self._stage_competency_detail_map(payload.stage)
         answer_map = {item.question_id: item for item in payload.answers}
 
         question_results: list[TrainingQuestionResult] = []
@@ -225,6 +228,11 @@ class TrainingService:
                     predicted_competency_names=self._resolve_competency_names(
                         predicted_levels,
                         stage_name_map,
+                    ),
+                    competency_results=self._build_competency_results(
+                        expected_levels=question.expected_levels,
+                        predicted_levels=predicted_levels,
+                        detail_map=stage_detail_map,
                     ),
                 )
             )
@@ -262,6 +270,40 @@ class TrainingService:
             training_scope=user.training_scope,
             attempt_no=attempt_no,
             completed_at=completed_at,
+            question_results=question_results,
+        )
+
+    def list_attempts(self, user_id: int, stage: TrainingStage) -> list[TrainingAttemptResponse]:
+        self._require_user(user_id)
+        stmt = (
+            select(AnnotatorTrainingAttempt)
+            .where(
+                AnnotatorTrainingAttempt.user_id == user_id,
+                AnnotatorTrainingAttempt.edu_stage == stage,
+            )
+            .order_by(
+                AnnotatorTrainingAttempt.attempt_no.desc(),
+                AnnotatorTrainingAttempt.completed_at.desc(),
+            )
+        )
+        attempts = list(self.db.scalars(stmt))
+        return [self._serialize_attempt(attempt) for attempt in attempts]
+
+    def _serialize_attempt(self, attempt: AnnotatorTrainingAttempt) -> TrainingAttemptResponse:
+        summary = attempt.summary_json or {}
+        raw_results = summary.get("question_results", [])
+        question_results = [
+            TrainingQuestionResult.model_validate(item)
+            for item in raw_results
+            if isinstance(item, dict)
+        ]
+        return TrainingAttemptResponse(
+            stage=attempt.edu_stage,  # type: ignore[arg-type]
+            passed=attempt.status == "PASSED",
+            score_percent=float(attempt.score_percent),
+            pass_threshold=int(attempt.pass_threshold),
+            attempt_no=int(attempt.attempt_no),
+            completed_at=attempt.completed_at,
             question_results=question_results,
         )
 
@@ -514,6 +556,26 @@ class TrainingService:
         ).all()
         return {int(row[0]): str(row[1]) for row in rows}
 
+    def _stage_competency_detail_map(self, stage: TrainingStage) -> dict[int, dict[str, str]]:
+        content_by_code = {
+            str(item["code"]): item
+            for item in TRAINING_CONTENT[stage]["competencies"]  # type: ignore[index]
+        }
+        rows = self.db.execute(
+            select(Competency.id, Competency.code, Competency.name).where(
+                Competency.code.in_(STAGE_COMPETENCY_CODES[stage])
+            )
+        ).all()
+        details: dict[int, dict[str, str]] = {}
+        for competency_id, code, db_name in rows:
+            content = content_by_code.get(str(code), {})
+            details[int(competency_id)] = {
+                "name": str(content.get("name") or db_name),
+                "definition": str(content.get("definition") or ""),
+                "focus_tip": str(content.get("focus_tip") or ""),
+            }
+        return details
+
     def _competency_level_map(
         self,
         items: Iterable,
@@ -565,6 +627,31 @@ class TrainingService:
         name_map: dict[int, str],
     ) -> list[str]:
         return [name_map[cid] for cid, level in levels.items() if level > 0 and cid in name_map]
+
+    def _build_competency_results(
+        self,
+        *,
+        expected_levels: dict[int, int],
+        predicted_levels: dict[int, int],
+        detail_map: dict[int, dict[str, str]],
+    ) -> list[TrainingQuestionCompetencyResult]:
+        results: list[TrainingQuestionCompetencyResult] = []
+        for competency_id, detail in detail_map.items():
+            expected_level = int(expected_levels.get(competency_id, 0))
+            selected_level = int(predicted_levels.get(competency_id, 0))
+            results.append(
+                TrainingQuestionCompetencyResult(
+                    competency_id=competency_id,
+                    competency_name=detail["name"],
+                    expected_level=expected_level,
+                    selected_level=selected_level,
+                    is_match=expected_level == selected_level,
+                    definition=detail["definition"],
+                    focus_tip=detail["focus_tip"],
+                    level_reason=self._level_reason(expected_level),
+                )
+            )
+        return results
 
     def _level_reason(self, level_value: int) -> str:
         if level_value <= 0:

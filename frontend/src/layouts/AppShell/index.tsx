@@ -10,45 +10,149 @@ import {
   SearchOutlined,
   TeamOutlined,
 } from "@ant-design/icons";
-import { Avatar, Badge, Button, Input, Layout, Menu, Space, Tag, Typography } from "antd";
+import { Avatar, Badge, Button, FloatButton, Input, Layout, Space, Tag, Typography } from "antd";
 import type { ReactNode } from "react";
+import { useMemo } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { useAuthStore, type UserRole } from "@/app/store/auth-store";
 
 const { Header, Sider, Content } = Layout;
 
-type MenuItem = {
+type AppMenuChild = {
+  key: string;
+  label: string;
+};
+
+type AppMenuItem = {
   key: string;
   icon: ReactNode;
   label: string;
   roles: UserRole[];
+  children?: AppMenuChild[];
 };
 
-const menuItems: MenuItem[] = [
+const menuItems: AppMenuItem[] = [
   { key: "/workspace", icon: <AppstoreOutlined />, label: "我的工作台", roles: ["annotator", "reviewer"] },
   { key: "/annotator-training", icon: <SafetyCertificateOutlined />, label: "培训准入", roles: ["annotator"] },
   { key: "/annotate", icon: <TeamOutlined />, label: "标注工作台", roles: ["annotator"] },
   { key: "/annotation-history", icon: <ProfileOutlined />, label: "我的标注记录", roles: ["annotator"] },
   { key: "/review", icon: <SafetyCertificateOutlined />, label: "标注复核", roles: ["reviewer"] },
   { key: "/review-history", icon: <FileSearchOutlined />, label: "已复核题目", roles: ["reviewer"] },
-  { key: "/dedup-review", icon: <SafetyCertificateOutlined />, label: "判重复核", roles: ["admin", "reviewer"] },
-  { key: "/questions", icon: <SearchOutlined />, label: "统一题池", roles: ["admin"] },
-  { key: "/visualization", icon: <BarChartOutlined />, label: "可视化", roles: ["admin"] },
-  { key: "/admin/overview", icon: <AppstoreOutlined />, label: "项目总览", roles: ["admin"] },
-  { key: "/imports", icon: <ImportOutlined />, label: "导入中心", roles: ["admin"] },
-  { key: "/training", icon: <ExperimentOutlined />, label: "训练监控", roles: ["admin"] },
-  { key: "/admin", icon: <AppstoreOutlined />, label: "管理后台", roles: ["admin"] },
+  {
+    key: "/admin/overview",
+    icon: <AppstoreOutlined />,
+    label: "项目总览",
+    roles: ["admin"],
+    children: [
+      { key: "/admin/overview#overview-hero", label: "整体概况" },
+      { key: "/admin/overview#overview-metrics", label: "关键指标" },
+      { key: "/admin/overview#overview-timeline", label: "阶段进度" },
+      { key: "/admin/overview#overview-next", label: "下一步计划" },
+    ],
+  },
+  {
+    key: "/imports",
+    icon: <ImportOutlined />,
+    label: "导入中心",
+    roles: ["admin"],
+    children: [
+      { key: "/imports#imports-upload", label: "上传入口" },
+      { key: "/imports#imports-progress", label: "导入进度" },
+      { key: "/imports#imports-batches", label: "批次列表" },
+      { key: "/imports#imports-detail", label: "批次详情" },
+    ],
+  },
+  {
+    key: "/dedup-review",
+    icon: <SafetyCertificateOutlined />,
+    label: "判重复核",
+    roles: ["admin", "reviewer"],
+    children: [
+      { key: "/dedup-review#dedup-summary", label: "候选概览" },
+      { key: "/dedup-review#dedup-bulk", label: "批量规则" },
+      { key: "/dedup-review#dedup-candidates", label: "候选详情" },
+    ],
+  },
+  {
+    key: "/questions",
+    icon: <SearchOutlined />,
+    label: "统一题池",
+    roles: ["admin"],
+    children: [
+      { key: "/questions#questions-overview", label: "题池概览" },
+      { key: "/questions#questions-filters", label: "筛选条件" },
+      { key: "/questions#questions-list", label: "题目列表" },
+    ],
+  },
+  {
+    key: "/visualization",
+    icon: <BarChartOutlined />,
+    label: "可视化",
+    roles: ["admin"],
+    children: [
+      { key: "/visualization#visualization-status", label: "嵌入概览" },
+      { key: "/visualization#visualization-chart", label: "分布图" },
+      { key: "/visualization#visualization-detail", label: "选点详情" },
+    ],
+  },
+  {
+    key: "/admin",
+    icon: <AppstoreOutlined />,
+    label: "管理后台",
+    roles: ["admin"],
+    children: [
+      { key: "/admin#admin-training", label: "训练模型" },
+      { key: "/admin#admin-prediction", label: "低置信度选题" },
+      { key: "/admin#admin-coreset", label: "CoreSet 选题" },
+    ],
+  },
+  {
+    key: "/training",
+    icon: <ExperimentOutlined />,
+    label: "训练监控",
+    roles: ["admin"],
+    children: [
+      { key: "/training#training-summary", label: "运行概览" },
+      { key: "/training#training-selection-batches", label: "题池治理" },
+      { key: "/training#training-coreset-history", label: "CoreSet 历史" },
+      { key: "/training#training-trends", label: "趋势分析" },
+      { key: "/training#training-runs", label: "训练任务" },
+      { key: "/training#training-models", label: "模型版本" },
+      { key: "/training#training-prediction-runs", label: "预测任务" },
+    ],
+  },
 ];
 
 function getRoleLabel(role: UserRole) {
-  if (role === "admin") return "管理员";
+  if (role === "admin") return "系统管理员";
   if (role === "annotator") return "标注员";
   return "复核员";
 }
 
 function getPageTitle(pathname: string) {
-  return menuItems.find((item) => pathname.startsWith(item.key))?.label ?? "K12 学科核心素养标注平台";
+  return menuItems.find((item) => pathname.startsWith(item.key))?.label ?? "K12 学科标注平台";
+}
+
+function getSelectedMenuKey(pathname: string, hash: string, visibleItems: AppMenuItem[]) {
+  const hashKey = `${pathname}${hash}`;
+  if (hash) {
+    const matchedChild = visibleItems.some((item) =>
+      item.children?.some((child) => child.key === hashKey),
+    );
+    if (matchedChild) {
+      return hashKey;
+    }
+  }
+  return visibleItems.find((item) => pathname.startsWith(item.key))?.key ?? pathname;
+}
+
+function isMenuItemActive(item: AppMenuItem, selectedKey: string, pathname: string) {
+  return (
+    selectedKey === item.key ||
+    item.children?.some((child) => child.key === selectedKey) ||
+    pathname === item.key
+  );
 }
 
 export function AppShell() {
@@ -57,13 +161,23 @@ export function AppShell() {
   const session = useAuthStore((state) => state.session);
   const logout = useAuthStore((state) => state.logout);
 
-  const visibleMenuItems = menuItems.filter((item) => session && item.roles.includes(session.role));
-  const selectedKey =
-    visibleMenuItems.find((item) => location.pathname.startsWith(item.key))?.key ?? location.pathname;
+  const visibleMenuItems = useMemo(
+    () => menuItems.filter((item) => session && item.roles.includes(session.role)),
+    [session],
+  );
+  const selectedKey = getSelectedMenuKey(location.pathname, location.hash, visibleMenuItems);
+  const handleNavigation = (key: string) => {
+    navigate(key);
+    if (!key.includes("#") && key === location.pathname) {
+      window.requestAnimationFrame(() => {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      });
+    }
+  };
 
   return (
     <Layout className="app-shell">
-      <Sider width={248} theme="light" className="app-shell__sider">
+      <Sider width={264} theme="light" className="app-shell__sider">
         <div className="brand-block">
           <div className="brand-block__eyebrow">K12 Subject Annotation</div>
           <Typography.Title level={4} className="brand-block__title">
@@ -74,16 +188,44 @@ export function AppShell() {
           </Typography.Paragraph>
         </div>
 
-        <Menu
-          mode="inline"
-          selectedKeys={[selectedKey]}
-          items={visibleMenuItems.map((item) => ({
-            key: item.key,
-            icon: item.icon,
-            label: item.label,
-          }))}
-          onClick={({ key }: { key: string }) => navigate(key)}
-        />
+        <nav className="app-nav" aria-label="Main navigation">
+          {visibleMenuItems.map((item) => {
+            const isActive = isMenuItemActive(item, selectedKey, location.pathname);
+            return (
+              <div
+                key={item.key}
+                className={`app-nav__group${isActive ? " app-nav__group--active" : ""}`}
+              >
+                <button
+                  type="button"
+                  className="app-nav__item"
+                  onClick={() => handleNavigation(item.key)}
+                  aria-current={isActive ? "page" : undefined}
+                >
+                  <span className="app-nav__icon">{item.icon}</span>
+                  <span className="app-nav__label">{item.label}</span>
+                  {item.children?.length ? <span className="app-nav__chevron" /> : null}
+                </button>
+                {item.children?.length ? (
+                  <div className="app-nav__children">
+                    {item.children.map((child) => (
+                      <button
+                        key={child.key}
+                        type="button"
+                        className={`app-nav__child${
+                          child.key === selectedKey ? " app-nav__child--active" : ""
+                        }`}
+                        onClick={() => handleNavigation(child.key)}
+                      >
+                        {child.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </nav>
       </Sider>
 
       <Layout>
@@ -99,18 +241,12 @@ export function AppShell() {
           </div>
 
           <Space size={14} className="app-shell__header-actions">
-            <Input
-              prefix={<SearchOutlined />}
-              placeholder="全局搜索题目、批次或任务"
-              className="app-shell__search"
-            />
+            <Input prefix={<SearchOutlined />} placeholder="全局搜索题目、批次或任务" className="app-shell__search" />
             <div className="app-shell__user">
               <Avatar className="app-shell__avatar">{session?.name.slice(0, 1) ?? "U"}</Avatar>
               <div className="app-shell__user-meta">
                 <Typography.Text strong>{session?.name}</Typography.Text>
-                <Typography.Text type="secondary">
-                  {session ? getRoleLabel(session.role) : ""}
-                </Typography.Text>
+                <Typography.Text type="secondary">{session ? getRoleLabel(session.role) : ""}</Typography.Text>
               </div>
             </div>
             <Button
@@ -129,6 +265,7 @@ export function AppShell() {
         <Content className="app-shell__content">
           <Outlet />
         </Content>
+        <FloatButton.BackTop visibilityHeight={320} className="app-back-top" />
       </Layout>
     </Layout>
   );

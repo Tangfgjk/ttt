@@ -24,6 +24,7 @@ import {
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
+import { usePageHashScroll } from "@/app/use-page-hash-scroll";
 import { useAuthStore } from "@/app/store/auth-store";
 import { QuestionRichText } from "@/components/question-rich-text";
 import {
@@ -321,6 +322,8 @@ function QuestionDetailDrawerContent({
 }
 
 export function QuestionsPage() {
+  usePageHashScroll();
+
   const session = useAuthStore((state) => state.session);
   const isAdmin = session?.role === "admin";
   const [searchParams, setSearchParams] = useSearchParams();
@@ -475,7 +478,7 @@ export function QuestionsPage() {
 
   return (
     <Space direction="vertical" size={20} style={{ width: "100%" }}>
-      <Card className="hero-panel">
+      <Card id="questions-overview" className="hero-panel page-section-anchor">
         <Space direction="vertical" size={4}>
           <Typography.Title level={3} style={{ margin: 0 }}>
             统一题池
@@ -504,7 +507,7 @@ export function QuestionsPage() {
         </Col>
       </Row>
 
-      <Card>
+      <Card id="questions-filters" className="page-section-anchor">
         {filters.question_ids?.length ? (
           <Alert
             type="info"
@@ -566,7 +569,7 @@ export function QuestionsPage() {
         </Form>
       </Card>
 
-      <Card>
+      <Card id="questions-list" className="page-section-anchor">
         {questionListQuery.isLoading ? (
           <Result icon={<Spin size="large" />} title="正在加载题池数据" />
         ) : (

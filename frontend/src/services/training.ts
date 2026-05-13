@@ -1,5 +1,6 @@
 import { apiClient } from "@/services/api-client";
 import type {
+  TrainingAttemptResponse,
   TrainingModuleResponse,
   TrainingStage,
   TrainingStatusResponse,
@@ -16,6 +17,13 @@ export async function getTrainingStatus(userId: number) {
 
 export async function getTrainingModule(userId: number, stage: TrainingStage) {
   const response = await apiClient.get<TrainingModuleResponse>(`/training/modules/${stage}`, {
+    params: { user_id: userId },
+  });
+  return response.data;
+}
+
+export async function getTrainingAttempts(userId: number, stage: TrainingStage) {
+  const response = await apiClient.get<TrainingAttemptResponse[]>(`/training/attempts/${stage}`, {
     params: { user_id: userId },
   });
   return response.data;

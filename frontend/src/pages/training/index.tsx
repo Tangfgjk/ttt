@@ -1,32 +1,74 @@
-import { Button, Card, Col, Descriptions, Empty, Row, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
+import { Button, Card, Col, Descriptions, Drawer, Empty, Popconfirm, Row, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
 import * as echarts from "echarts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Key } from "react";
+import { useNavigate } from "react-router-dom";
 
+import { usePageHashScroll } from "@/app/use-page-hash-scroll";
+import { useAuthStore } from "@/app/store/auth-store";
 import {
   useActiveLearningOverview,
   useActivateModelVersion,
 } from "@/modules/active-learning/hooks";
+import {
+  useAnnotationPoolSummary,
+  useResetAnnotationPools,
+  useRollbackSelectionBatch,
+  useSelectionBatches,
+} from "@/modules/annotations/hooks";
 import type {
+  CoresetRun,
   ModelVersion,
   PredictionRun,
   TrainingEpoch,
   TrainingRun,
   TrendGroup,
 } from "@/types/active-learning";
+import type {
+  AnnotationPoolStatus,
+  SelectionBatchSummary,
+  SelectionStrategy,
+} from "@/types/annotations";
+
+const coreSetAlgorithms = new Set<SelectionStrategy>([
+  "moe",
+  "kmeans",
+  "facility_location",
+  "graph_cut",
+  "random",
+]);
+
+const poolStatusLabels: Record<AnnotationPoolStatus, string> = {
+  PENDING: "未标注池",
+  WAITING: "待标注池",
+  IN_PROGRESS: "领取中",
+  REVIEW_PENDING: "待复核池",
+  COMPLETED: "已完成池",
+};
 
 export function TrainingPage() {
+  usePageHashScroll();
+
+  const navigate = useNavigate();
+  const session = useAuthStore((state) => state.session);
   const chartRef = useRef<HTMLDivElement | null>(null);
   const chartInstanceRef = useRef<echarts.ECharts | null>(null);
   const trainingTableAnchorRef = useRef<HTMLDivElement | null>(null);
   const { data, isLoading } = useActiveLearningOverview();
+  const { data: poolSummary, isLoading: isPoolSummaryLoading } = useAnnotationPoolSummary();
+  const { data: selectionBatches = [] } = useSelectionBatches();
   const activateMutation = useActivateModelVersion();
+  const resetPoolsMutation = useResetAnnotationPools();
+  const rollbackSelectionBatchMutation = useRollbackSelectionBatch();
   const [selectedTrendGroupKey, setSelectedTrendGroupKey] = useState<string>();
   const [expandedTrainingRunKeys, setExpandedTrainingRunKeys] = useState<Key[]>([]);
+  const [selectedCoresetRun, setSelectedCoresetRun] = useState<CoresetRun | null>(null);
 
   const trendGroups = data?.trend_groups ?? [];
   const trainingRuns = data?.training_runs ?? [];
   const modelVersions = data?.model_versions ?? [];
+  const predictionRuns = data?.prediction_runs ?? [];
+  const coresetRuns = data?.coreset_runs ?? [];
 
   useEffect(() => {
     if (!trendGroups.length) {
@@ -52,6 +94,13 @@ export function TrainingPage() {
       detection: points.map((item) => item.detection_rate ?? 0),
     };
   }, [selectedTrendGroup]);
+
+  const poolCounts = useMemo(() => {
+    return (poolSummary?.items ?? []).reduce<Record<string, number>>((acc, item) => {
+      acc[item.status] = item.count;
+      return acc;
+    }, {});
+  }, [poolSummary?.items]);
 
   useEffect(() => {
     if (!chartRef.current) return;
@@ -95,6 +144,29 @@ export function TrainingPage() {
     }, 0);
   };
 
+  const openQuestionSelection = (questionIds: number[], annotationStatus?: string) => {
+    if (!questionIds.length) return;
+    const params = new URLSearchParams();
+    params.set("question_ids", questionIds.join(","));
+    if (annotationStatus) {
+      params.set("annotation_status", annotationStatus);
+    }
+    navigate(`/questions?${params.toString()}`);
+  };
+
+  const handleResetPools = async () => {
+    if (!session) return;
+    await resetPoolsMutation.mutateAsync({ admin_user_id: session.id });
+  };
+
+  const handleRollbackSelectionBatch = async (batchId: number) => {
+    if (!session) return;
+    await rollbackSelectionBatchMutation.mutateAsync({
+      batchId,
+      payload: { admin_user_id: session.id },
+    });
+  };
+
   const trainingColumns = [
     {
       title: "任务",
@@ -113,9 +185,7 @@ export function TrainingPage() {
         row.related_model_version_id ? (
           <Tooltip title={row.related_model_display_name ?? row.related_model_version_code}>
             <Button type="link" style={{ padding: 0 }} onClick={() => focusTrainingRun(row.id)}>
-              {compactModelDisplayName(
-                row.related_model_display_name ?? row.related_model_version_code,
-              )}
+              {compactModelDisplayName(row.related_model_display_name ?? row.related_model_version_code)}
             </Button>
           </Tooltip>
         ) : (
@@ -220,6 +290,137 @@ export function TrainingPage() {
     { title: "已入池", dataIndex: "moved_count" },
   ];
 
+  const selectionBatchColumns = [
+    {
+      title: "批次",
+      key: "batch_no",
+      render: (_value: unknown, row: SelectionBatchSummary) => (
+        <Space direction="vertical" size={0}>
+          <Typography.Text strong>{row.batch_no}</Typography.Text>
+          <Typography.Text type="secondary">
+            {formatBatchType(row.algorithm_code)} · {formatDateTime(row.created_at)}
+          </Typography.Text>
+        </Space>
+      ),
+    },
+    {
+      title: "策略",
+      dataIndex: "algorithm_code",
+      key: "algorithm_code",
+      render: (value: string) => (
+        <Tag color={coreSetAlgorithms.has(value as SelectionStrategy) ? "green" : "blue"}>
+          {formatAlgorithmLabel(value)}
+        </Tag>
+      ),
+    },
+    {
+      title: "选题结果",
+      key: "counts",
+      render: (_value: unknown, row: SelectionBatchSummary) => (
+        <Space direction="vertical" size={0}>
+          <Typography.Text>
+            候选 {row.candidate_count} / 选中 {row.selected_count} / 请求 {row.requested_count}
+          </Typography.Text>
+          <Typography.Text type="secondary">
+            当前池中：未标注 {row.pending_count} · 待标注 {row.waiting_count} · 领取中 {row.in_progress_count}
+          </Typography.Text>
+        </Space>
+      ),
+    },
+    {
+      title: "操作",
+      key: "actions",
+      render: (_value: unknown, row: SelectionBatchSummary) => {
+        const disabled = row.pending_count + row.waiting_count + row.in_progress_count <= 0;
+        return (
+          <Space wrap>
+            <Button size="small" onClick={() => openQuestionSelection(row.question_ids)} disabled={row.question_ids.length <= 0}>
+              查看题目
+            </Button>
+            <Popconfirm
+              title="撤回本批次选题"
+              description="会把本批次仍在领取中或待标注的题目回收到未标注池。"
+              okText="确认撤回"
+              cancelText="取消"
+              disabled={disabled}
+              onConfirm={() => void handleRollbackSelectionBatch(row.id)}
+            >
+              <Button size="small" disabled={disabled} loading={rollbackSelectionBatchMutation.isPending}>
+                撤回本批次
+              </Button>
+            </Popconfirm>
+          </Space>
+        );
+      },
+    },
+  ];
+
+  const coresetRunColumns = [
+    {
+      title: "任务",
+      key: "run_no",
+      render: (_value: unknown, row: CoresetRun) => (
+        <Space direction="vertical" size={0}>
+          <Typography.Text strong>{row.run_no}</Typography.Text>
+          <Typography.Text type="secondary">{formatDateTime(row.created_at)}</Typography.Text>
+        </Space>
+      ),
+    },
+    {
+      title: "策略",
+      key: "strategy",
+      render: (_value: unknown, row: CoresetRun) => (
+        <Space direction="vertical" size={0}>
+          <Tag color="green">{formatAlgorithmLabel(row.strategy)}</Tag>
+          <Typography.Text type="secondary">
+            {row.update_mode === "incremental" ? "增量更新" : "全量选题"} ·{" "}
+            {row.data_scope === "pending" ? "未标注池" : "全部题目"}
+          </Typography.Text>
+        </Space>
+      ),
+    },
+    {
+      title: "状态",
+      key: "status",
+      render: (_value: unknown, row: CoresetRun) => (
+        <Space direction="vertical" size={0}>
+          <Tag color={statusTagColor(row.status)}>{row.status}</Tag>
+          <Typography.Text type="secondary">
+            {String(row.metrics_json?.progress_label ?? row.metrics_json?.phase ?? "-")}
+          </Typography.Text>
+        </Space>
+      ),
+    },
+    {
+      title: "结果",
+      key: "result",
+      render: (_value: unknown, row: CoresetRun) => (
+        <Space direction="vertical" size={0}>
+          <Typography.Text>
+            候选 {row.candidate_count} / 选中 {row.selected_count} / 入池 {row.moved_count}
+          </Typography.Text>
+          <Typography.Text type="secondary">
+            模式：{String(row.metrics_json?.selection_mode ?? "-")}
+          </Typography.Text>
+        </Space>
+      ),
+    },
+    {
+      title: "操作",
+      key: "actions",
+      render: (_value: unknown, row: CoresetRun) => (
+        <Space wrap>
+          <Button size="small" onClick={() => setSelectedCoresetRun(row)}>
+            查看详情
+          </Button>
+          <Button size="small" onClick={() => openQuestionSelection(row.question_ids)} disabled={row.question_ids.length <= 0}>
+            查看题目
+          </Button>
+        </Space>
+      ),
+    },
+  ];
+
   return (
     <Space direction="vertical" size={20} style={{ width: "100%" }}>
       <Card>
@@ -227,34 +428,96 @@ export function TrainingPage() {
           训练监控
         </Typography.Title>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          查看主动学习训练任务、模型版本、预测任务以及按相同参数分组后的指标趋势。
+          查看主动学习训练任务、模型版本、预测任务，以及按相同参数分组后的指标趋势，同时在这里统一查看题池治理与 CoreSet 历史任务。
         </Typography.Paragraph>
       </Card>
 
-      <Row gutter={[16, 16]} align="stretch">
+      <Row id="training-summary" gutter={[16, 16]} className="page-section-anchor">
         <Col xs={24} sm={12} xl={6}>
           <SummaryCard
             title="当前模型"
             value={compactModelDisplayName(data?.active_model?.version_display_name)}
             fullValue={data?.active_model?.version_display_name ?? "-"}
+            hint="当前启用版本"
             loading={isLoading}
             ellipsisRows={2}
           />
         </Col>
         <Col xs={24} sm={12} xl={6}>
-          <SummaryCard title="训练样本" value={data?.completed_sample_count ?? 0} loading={isLoading} />
+          <SummaryCard title="训练样本" value={data?.completed_sample_count ?? 0} hint="可用于训练的已完成题目" loading={isLoading} />
         </Col>
         <Col xs={24} sm={12} xl={6}>
-          <SummaryCard title="未标注候选" value={data?.pending_candidate_count ?? 0} loading={isLoading} />
+          <SummaryCard title="未标注候选" value={data?.pending_candidate_count ?? 0} hint="当前未进入待标注池的题目" loading={isLoading} />
         </Col>
         <Col xs={24} sm={12} xl={6}>
-          <SummaryCard title="模型版本数" value={modelVersions.length} loading={isLoading} />
+          <SummaryCard title="模型版本数" value={modelVersions.length} hint="已登记到系统的模型版本" loading={isLoading} />
         </Col>
       </Row>
 
       <Card
+        id="training-selection-batches"
+        className="page-section-anchor training-board-card"
+        title="题池治理"
+        extra={(
+          <Popconfirm
+            title="回收题池"
+            description="会把领取中的题目回收，并把待标注池中尚未开始的题目退回未标注池。"
+            okText="确认回收"
+            cancelText="取消"
+            onConfirm={() => void handleResetPools()}
+          >
+            <Button loading={resetPoolsMutation.isPending}>回收领取中与待标注题目</Button>
+          </Popconfirm>
+        )}
+      >
+        <Space direction="vertical" size={14} style={{ width: "100%" }}>
+          <Typography.Text type="secondary">
+            这里集中查看 CoreSet / 低置信度选题批次，并支持按批次撤回。
+          </Typography.Text>
+          <Space wrap>
+            {(Object.keys(poolStatusLabels) as AnnotationPoolStatus[]).map((status) => (
+              <Tag key={status} color="blue">
+                {poolStatusLabels[status]} {isPoolSummaryLoading ? "-" : poolCounts[status] ?? 0}
+              </Tag>
+            ))}
+          </Space>
+          <Table<SelectionBatchSummary>
+            rowKey="id"
+            size="small"
+            pagination={{
+              pageSize: 8,
+              showSizeChanger: true,
+              pageSizeOptions: ["8", "10", "20"],
+              showTotal: (total: number) => `共 ${total} 个选题批次`,
+            }}
+            dataSource={selectionBatches}
+            columns={selectionBatchColumns}
+            locale={{ emptyText: "暂无可治理的选题批次" }}
+          />
+        </Space>
+      </Card>
+
+      <Card id="training-coreset-history" className="page-section-anchor training-board-card" title="CoreSet 历史任务">
+        <Table<CoresetRun>
+          rowKey="id"
+          size="small"
+          pagination={{
+            pageSize: 8,
+            showSizeChanger: true,
+            pageSizeOptions: ["8", "10", "20"],
+            showTotal: (total: number) => `共 ${total} 个 CoreSet 任务`,
+          }}
+          dataSource={coresetRuns}
+          columns={coresetRunColumns}
+          locale={{ emptyText: "暂无 CoreSet 历史任务" }}
+        />
+      </Card>
+
+      <Card
+        id="training-trends"
+        className="page-section-anchor training-board-card"
         title="模型版本指标趋势"
-        extra={
+        extra={(
           <Select
             style={{ minWidth: 420 }}
             placeholder="选择趋势分组"
@@ -265,7 +528,7 @@ export function TrainingPage() {
             }))}
             onChange={setSelectedTrendGroupKey}
           />
-        }
+        )}
       >
         {selectedTrendGroup ? (
           <Space direction="vertical" size={12} style={{ width: "100%" }}>
@@ -283,14 +546,15 @@ export function TrainingPage() {
       </Card>
 
       <div ref={trainingTableAnchorRef} />
-      <Card title="训练任务">
+      <Card id="training-runs" className="page-section-anchor training-board-card" title="训练任务">
         <Table<TrainingRun>
           rowKey="id"
           loading={isLoading}
           dataSource={trainingRuns}
           pagination={{
             pageSize: 6,
-            showSizeChanger: false,
+            showSizeChanger: true,
+            pageSizeOptions: ["6", "10", "20"],
             showTotal: (total: number) => `共 ${total} 条训练任务`,
           }}
           expandable={{
@@ -302,7 +566,7 @@ export function TrainingPage() {
         />
       </Card>
 
-      <Card title="模型版本">
+      <Card id="training-models" className="page-section-anchor training-board-card" title="模型版本">
         <Table<ModelVersion>
           rowKey="id"
           size="small"
@@ -310,28 +574,122 @@ export function TrainingPage() {
           dataSource={modelVersions}
           pagination={{
             pageSize: 8,
-            showSizeChanger: false,
+            showSizeChanger: true,
+            pageSizeOptions: ["8", "10", "20"],
             showTotal: (total: number) => `共 ${total} 个模型版本`,
           }}
           columns={versionColumns}
         />
       </Card>
 
-      <Card title="预测任务">
+      <Card id="training-prediction-runs" className="page-section-anchor training-board-card" title="预测任务">
         <Table<PredictionRun>
           rowKey="id"
           size="small"
           loading={isLoading}
-          dataSource={data?.prediction_runs ?? []}
+          dataSource={predictionRuns}
           pagination={{
             pageSize: 6,
-            showSizeChanger: false,
+            showSizeChanger: true,
+            pageSizeOptions: ["6", "10", "20"],
             showTotal: (total: number) => `共 ${total} 个预测任务`,
           }}
           locale={{ emptyText: "暂无预测任务" }}
           columns={predictionColumns}
         />
       </Card>
+
+      <Drawer
+        title={selectedCoresetRun ? `CoreSet 任务详情 · ${selectedCoresetRun.run_no}` : "CoreSet 任务详情"}
+        width={720}
+        open={Boolean(selectedCoresetRun)}
+        onClose={() => setSelectedCoresetRun(null)}
+        destroyOnClose
+      >
+        {selectedCoresetRun ? (
+          <Space direction="vertical" size={16} style={{ width: "100%" }}>
+            <Descriptions column={2} bordered size="small">
+              <Descriptions.Item label="状态">
+                <Tag color={statusTagColor(selectedCoresetRun.status)}>{selectedCoresetRun.status}</Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="运行阶段">
+                {String(selectedCoresetRun.metrics_json?.progress_label ?? selectedCoresetRun.metrics_json?.phase ?? "-")}
+              </Descriptions.Item>
+              <Descriptions.Item label="策略">{formatAlgorithmLabel(selectedCoresetRun.strategy)}</Descriptions.Item>
+              <Descriptions.Item label="候选范围">
+                {selectedCoresetRun.data_scope === "pending" ? "未标注池" : "全部题目"}
+              </Descriptions.Item>
+              <Descriptions.Item label="更新模式">
+                {selectedCoresetRun.update_mode === "incremental" ? "增量更新" : "全量选题"}
+              </Descriptions.Item>
+              <Descriptions.Item label="基线批次">
+                {selectedCoresetRun.baseline_batch_no ?? selectedCoresetRun.baseline_run_no ?? "-"}
+              </Descriptions.Item>
+              <Descriptions.Item label="请求数">{selectedCoresetRun.requested_count}</Descriptions.Item>
+              <Descriptions.Item label="候选数">{selectedCoresetRun.candidate_count}</Descriptions.Item>
+              <Descriptions.Item label="选中数">{selectedCoresetRun.selected_count}</Descriptions.Item>
+              <Descriptions.Item label="入池数">{selectedCoresetRun.moved_count}</Descriptions.Item>
+              <Descriptions.Item label="运行模式">
+                {String(selectedCoresetRun.metrics_json?.selection_mode ?? "-")}
+              </Descriptions.Item>
+              <Descriptions.Item label="批次号">{selectedCoresetRun.batch_no ?? "-"}</Descriptions.Item>
+              <Descriptions.Item label="历史锚点数">
+                {String(selectedCoresetRun.metrics_json?.anchor_count ?? "-")}
+              </Descriptions.Item>
+              <Descriptions.Item label="快照截止">
+                {formatDateTime((selectedCoresetRun.metrics_json?.snapshot_created_before as string | null | undefined) ?? null)}
+              </Descriptions.Item>
+              <Descriptions.Item label="创建时间">{formatDateTime(selectedCoresetRun.created_at)}</Descriptions.Item>
+              <Descriptions.Item label="完成时间">
+                {selectedCoresetRun.finished_at ? formatDateTime(selectedCoresetRun.finished_at) : "-"}
+              </Descriptions.Item>
+              <Descriptions.Item label="分层簇数">
+                {String(selectedCoresetRun.metrics_json?.cluster_count ?? "-")}
+              </Descriptions.Item>
+              <Descriptions.Item label="有效簇数">
+                {String(selectedCoresetRun.metrics_json?.nonempty_cluster_count ?? "-")}
+              </Descriptions.Item>
+              <Descriptions.Item label="最大簇规模">
+                {String(selectedCoresetRun.metrics_json?.largest_cluster_size ?? "-")}
+              </Descriptions.Item>
+              <Descriptions.Item label="最小簇规模">
+                {String(selectedCoresetRun.metrics_json?.smallest_cluster_size ?? "-")}
+              </Descriptions.Item>
+            </Descriptions>
+
+            {selectedCoresetRun.error_message ? (
+              <Card size="small">
+                <Typography.Text type="danger">{selectedCoresetRun.error_message}</Typography.Text>
+              </Card>
+            ) : null}
+
+            <Card size="small" title="运行指标">
+              <pre
+                style={{
+                  margin: 0,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontSize: 12,
+                }}
+              >
+                {JSON.stringify(selectedCoresetRun.metrics_json ?? {}, null, 2)}
+              </pre>
+            </Card>
+
+            <Space wrap>
+              <Button onClick={() => openQuestionSelection(selectedCoresetRun.question_ids)} disabled={selectedCoresetRun.question_ids.length <= 0}>
+                查看本次选中题目
+              </Button>
+              <Button
+                onClick={() => openQuestionSelection(selectedCoresetRun.moved_question_ids, "WAITING")}
+                disabled={selectedCoresetRun.moved_question_ids.length <= 0}
+              >
+                查看本次入池题目
+              </Button>
+            </Space>
+          </Space>
+        ) : null}
+      </Drawer>
     </Space>
   );
 }
@@ -340,17 +698,19 @@ function SummaryCard({
   title,
   value,
   fullValue,
+  hint,
   loading,
   ellipsisRows = 1,
 }: {
   title: string;
   value: string | number;
   fullValue?: string | number;
+  hint?: string;
   loading?: boolean;
   ellipsisRows?: number;
 }) {
   return (
-    <Card className="training-summary-card" bodyStyle={{ height: "100%", padding: 22 }}>
+    <Card className="training-summary-card training-board-card" bodyStyle={{ height: "100%", padding: 20 }}>
       <div className="training-summary-card__body">
         <Typography.Text type="secondary">{title}</Typography.Text>
         {loading ? (
@@ -362,6 +722,7 @@ function SummaryCard({
             </Typography.Paragraph>
           </Tooltip>
         )}
+        {hint ? <div className="training-summary-card__hint">{hint}</div> : null}
       </div>
     </Card>
   );
@@ -551,7 +912,7 @@ function compactModelDisplayName(value?: string | null) {
 
   if (stage) compactParts.push(stageText(stage));
   if (model) compactParts.push(model.toUpperCase());
-  if (sample) compactParts.push(sample.replace(/^s/i, "") + "题");
+  if (sample) compactParts.push(`${sample.replace(/^s/i, "")}题`);
   if (epoch) compactParts.push(epoch.toUpperCase());
   if (batch) compactParts.push(batch.toUpperCase());
   if (gold) compactParts.push(gold.toLowerCase() === "gold" ? "金标" : gold);
@@ -569,4 +930,35 @@ function compactTaskDisplayName(value?: string | null) {
 
   if (!stage || !model || !sample) return value;
   return `${stageText(stage)} / ${model.toUpperCase()} / ${sample.replace(/^s/i, "")}题`;
+}
+
+function formatAlgorithmLabel(value: string) {
+  const mapping: Record<string, string> = {
+    moe: "MoE 融合策略",
+    kmeans: "K-Means 覆盖",
+    facility_location: "Facility Location",
+    graph_cut: "Graph Cut",
+    random: "随机抽样",
+    mean_max_probability: "平均最高概率",
+    min_max_probability: "最小最高概率",
+    entropy: "信息熵",
+    margin: "边际差值",
+  };
+  return mapping[value] ?? value;
+}
+
+function formatBatchType(value: string) {
+  return coreSetAlgorithms.has(value as SelectionStrategy) ? "CoreSet 选题" : "低置信度选题";
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return "-";
+  return value.replace("T", " ").slice(0, 19);
+}
+
+function statusTagColor(status: string) {
+  if (status === "SUCCESS") return "green";
+  if (status === "FAILED") return "red";
+  if (status === "RUNNING") return "processing";
+  return "default";
 }

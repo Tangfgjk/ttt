@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.schemas.training import (
+    TrainingAttemptResponse,
     TrainingModuleResponse,
     TrainingStage,
     TrainingStatusResponse,
@@ -31,6 +32,15 @@ async def get_training_module(
     db: Session = Depends(get_db),
 ) -> TrainingModuleResponse:
     return TrainingService(db).get_module(user_id, stage)
+
+
+@router.get("/attempts/{stage}", response_model=list[TrainingAttemptResponse])
+async def list_training_attempts(
+    stage: TrainingStage,
+    user_id: int = Query(...),
+    db: Session = Depends(get_db),
+) -> list[TrainingAttemptResponse]:
+    return TrainingService(db).list_attempts(user_id, stage)
 
 
 @router.post("/submit", response_model=TrainingSubmitResponse)

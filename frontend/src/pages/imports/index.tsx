@@ -20,8 +20,10 @@ import {
 } from "antd";
 import { useNavigate } from "react-router-dom";
 
+import { usePageHashScroll } from "@/app/use-page-hash-scroll";
 import {
   useImportBatchDetail,
+  useImportBatchRecords,
   useImportBatches,
   useInitializeImportFolderUpload,
   useUploadImportBatchChunk,
@@ -63,6 +65,8 @@ const FOLDER_UPLOAD_CHUNK_SIZE = 500;
 const LARGE_JSON_FILE_THRESHOLD_BYTES = 10 * 1024 * 1024;
 const LARGE_JSON_RECORD_CHUNK_SIZE = 1000;
 const LARGE_JSON_UPLOAD_REQUEST_CHUNK_SIZE = 5;
+const DEFAULT_IMPORT_PAGE_SIZE = 10;
+const IMPORT_PAGE_SIZE_OPTIONS = [10, 20, 50];
 
 const batchColumns = [
   {
@@ -253,6 +257,8 @@ async function splitJsonFileIntoChunks(file: File, recordsPerChunk: number) {
 }
 
 export function ImportsPage() {
+  usePageHashScroll();
+
   const navigate = useNavigate();
   const [form] = Form.useForm();
   const folderInputRef = useRef<HTMLInputElement | null>(null);
@@ -263,11 +269,19 @@ export function ImportsPage() {
   const [folderFiles, setFolderFiles] = useState<File[]>([]);
   const [selectedBatchId, setSelectedBatchId] = useState<number | undefined>(undefined);
   const [importProgress, setImportProgress] = useState<ImportProgressState | null>(null);
+  const [batchPage, setBatchPage] = useState(1);
+  const [batchPageSize, setBatchPageSize] = useState(DEFAULT_IMPORT_PAGE_SIZE);
+  const [recordPage, setRecordPage] = useState(1);
+  const [recordPageSize, setRecordPageSize] = useState(DEFAULT_IMPORT_PAGE_SIZE);
   const dataSourceCode = Form.useWatch("data_source_code", form) as string | undefined;
 
   const batches = data ?? [];
   const detailQuery = useImportBatchDetail(selectedBatchId);
   const detail = detailQuery.data;
+  const detailRecordsQuery = useImportBatchRecords(selectedBatchId, {
+    page: recordPage,
+    page_size: recordPageSize,
+  });
   const selectedBatch = detail?.batch ?? batches.find((item) => item.id === selectedBatchId);
   const singleFile = fileList[0]?.originFileObj;
 
@@ -283,6 +297,10 @@ export function ImportsPage() {
       folderInputRef.current.setAttribute("directory", "");
     }
   }, []);
+
+  useEffect(() => {
+    setRecordPage(1);
+  }, [selectedBatchId]);
 
   const totalRecords = useMemo(
     () => batches.reduce((sum, item) => sum + item.total_records, 0),
@@ -301,6 +319,10 @@ export function ImportsPage() {
     () => shouldUseChunkedJsonUpload(dataSourceCode, singleFile),
     [dataSourceCode, singleFile],
   );
+  const pagedBatches = useMemo(() => {
+    const start = (batchPage - 1) * batchPageSize;
+    return batches.slice(start, start + batchPageSize);
+  }, [batchPage, batchPageSize, batches]);
   const localProgressPercent = useMemo(() => {
     if (!importProgress) {
       return 0;
@@ -574,7 +596,7 @@ export function ImportsPage() {
 
   return (
     <Space direction="vertical" size={20} style={{ width: "100%" }}>
-      <Card>
+      <Card id="imports-upload" className="page-section-anchor">
         <Typography.Title level={3} style={{ marginTop: 0 }}>
           导入中心
         </Typography.Title>
@@ -666,7 +688,7 @@ export function ImportsPage() {
       </Card>
 
       {importProgress ? (
-        <Card>
+        <Card id="imports-progress" className="page-section-anchor">
           <Space direction="vertical" size={10} style={{ width: "100%" }}>
             <Typography.Text strong>
               {importProgress.mode === "large-json" ? "大文件上传进度" : "文件上传进度"}
@@ -681,7 +703,7 @@ export function ImportsPage() {
       ) : null}
 
       {!importProgress && batchProgress ? (
-        <Card>
+        <Card id="imports-progress" className="page-section-anchor">
           <Space direction="vertical" size={10} style={{ width: "100%" }}>
             <Typography.Text strong>{batchProgress.title}</Typography.Text>
             <Progress percent={batchProgress.percent} status="active" />
@@ -709,7 +731,7 @@ export function ImportsPage() {
         </Col>
       </Row>
 
-      <Card>
+      <Card id="imports-batches" className="page-section-anchor">
         {!isLoading && !batches.length ? (
           <Empty description="当前还没有导入批次。" />
         ) : (
@@ -717,8 +739,19 @@ export function ImportsPage() {
             rowKey="id"
             loading={isLoading}
             columns={batchColumns}
-            dataSource={batches}
-            pagination={false}
+            dataSource={pagedBatches}
+            pagination={{
+              current: batchPage,
+              pageSize: batchPageSize,
+              total: batches.length,
+              showSizeChanger: true,
+              pageSizeOptions: IMPORT_PAGE_SIZE_OPTIONS.map(String),
+              showTotal: (total: number) => `共 ${total} 个导入批次`,
+              onChange: (page: number, pageSize: number) => {
+                setBatchPage(page);
+                setBatchPageSize(pageSize);
+              },
+            }}
             scroll={{ x: 1080 }}
             onRow={(record: ImportBatch) => ({
               onClick: () => setSelectedBatchId(record.id),
@@ -730,7 +763,7 @@ export function ImportsPage() {
         )}
       </Card>
 
-      <Card loading={detailQuery.isLoading}>
+      <Card id="imports-detail" className="page-section-anchor" loading={detailQuery.isLoading}>
         {!detail ? (
           <Empty description="请选择一个批次查看详情。" />
         ) : (
@@ -810,8 +843,20 @@ export function ImportsPage() {
             <Table<ImportSourceRecord>
               rowKey="id"
               columns={recordColumns}
-              dataSource={detail.records}
-              pagination={false}
+              loading={detailRecordsQuery.isLoading}
+              dataSource={detailRecordsQuery.data?.items ?? []}
+              pagination={{
+                current: detailRecordsQuery.data?.meta.page ?? recordPage,
+                pageSize: detailRecordsQuery.data?.meta.page_size ?? recordPageSize,
+                total: detailRecordsQuery.data?.meta.total ?? 0,
+                showSizeChanger: true,
+                pageSizeOptions: IMPORT_PAGE_SIZE_OPTIONS.map(String),
+                showTotal: (total: number) => `共 ${total} 条导入记录`,
+                onChange: (page: number, pageSize: number) => {
+                  setRecordPage(page);
+                  setRecordPageSize(pageSize);
+                },
+              }}
               scroll={{ x: 1400 }}
             />
           </Space>

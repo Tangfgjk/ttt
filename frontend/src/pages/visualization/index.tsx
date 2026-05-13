@@ -20,6 +20,7 @@ import * as echarts from "echarts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+import { usePageHashScroll } from "@/app/use-page-hash-scroll";
 import {
   getEmbeddingStatus,
   getQuestionDistribution,
@@ -61,6 +62,8 @@ const methodOptions: Array<{ label: string; value: VisualizationMethod }> = [
 const EMBEDDING_BATCH_LIMIT = 200;
 
 export function VisualizationPage() {
+  usePageHashScroll();
+
   const navigate = useNavigate();
   const chartRef = useRef<HTMLDivElement | null>(null);
   const chartInstanceRef = useRef<echarts.ECharts | null>(null);
@@ -222,7 +225,7 @@ export function VisualizationPage() {
 
   return (
     <Space direction="vertical" size={20} style={{ width: "100%" }}>
-      <Card>
+      <Card id="visualization-status" className="page-section-anchor">
         <Space direction="vertical" size={16} style={{ width: "100%" }}>
           <Space wrap align="center" style={{ justifyContent: "space-between", width: "100%" }}>
             <div>
@@ -315,7 +318,7 @@ export function VisualizationPage() {
         </Col>
       </Row>
 
-      <Card>
+      <Card id="visualization-chart" className="page-section-anchor">
         <div ref={chartRef} style={{ width: "100%", height: 560 }} />
         {!distributionQuery.data?.points.length ? (
           <Empty
@@ -344,7 +347,7 @@ export function VisualizationPage() {
             </Typography.Paragraph>
           </Card>
         </Col>
-        <Col xs={24} lg={14}>
+        <Col xs={24} lg={14} id="visualization-detail" className="page-section-anchor">
           <Card title="选中试题详情">
             {selectedPoint ? (
               <>
