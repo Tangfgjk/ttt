@@ -18,15 +18,18 @@ from app.models.assessment import (
     CoresetExperiment,
     QuestionAggregateCompetency,
     QuestionEmbedding,
+    QuestionGoldCompetency,
+    QuestionGoldLabel,
     QuestionLabelAggregate,
     RecommendationBatch,
     RecommendationItem,
     ReviewTask,
 )
 from app.models.auth import User
-from app.models.dictionary import Competency, Grade
+from app.models.dictionary import CognitiveLevel, Competency, Grade
 from app.models.question import Question, QuestionContent
 from app.schemas.annotations import (
+    AdminAggregateOverrideRequest,
     AdminQuestionAnnotationOut,
     AdminQuestionReviewOut,
     AdminPoolResetRequest,
@@ -90,6 +93,7 @@ ACTION_LABELS = {
     "AUTO_REVIEW_CLOSED": "系统关闭待处理复核任务",
     "ADMIN_APPROVED": "管理员审核通过",
     "ADMIN_REJECTED_FOR_REANNOTATION": "管理员打回补标",
+    "ADMIN_OVERRIDE_FINAL_RESULT": "管理员修改最终标注结果",
 }
 
 SELECTION_STRATEGIES = [
@@ -850,6 +854,115 @@ class AnnotationService:
         refreshed = self._get_question_with_annotations(question_id, with_for_update=False)
         return self._serialize_admin_question_review(refreshed)
 
+    def override_admin_question_review(
+        self,
+        question_id: int,
+        payload: AdminAggregateOverrideRequest,
+    ) -> AdminQuestionReviewOut:
+        admin_user = self._require_admin(payload.admin_user_id)
+        question = self._get_question_with_annotations(question_id, with_for_update=True)
+        final_annotations = self._final_annotations(question.id)
+        self._validate_cognitive_level_id(payload.final_cognitive_level_id)
+        self._validate_competencies(payload.competencies)
+
+        if final_annotations:
+            aggregate = self.db.scalar(
+                select(QuestionLabelAggregate)
+                .options(
+                    selectinload(QuestionLabelAggregate.competencies).selectinload(
+                        QuestionAggregateCompetency.competency
+                    )
+                )
+                .where(QuestionLabelAggregate.question_id == question.id)
+            )
+            if aggregate is None:
+                aggregate = self._aggregate_question(question, final_annotations)
+
+            self.db.execute(
+                delete(QuestionAggregateCompetency).where(
+                    QuestionAggregateCompetency.aggregate_id == aggregate.id
+                )
+            )
+            self.db.flush()
+
+            for competency in payload.competencies:
+                self.db.add(
+                    QuestionAggregateCompetency(
+                        aggregate_id=aggregate.id,
+                        competency_id=competency.competency_id,
+                        level_value=competency.level_value,
+                        agreement_score=None,
+                    )
+                )
+
+            aggregate.final_cognitive_level_id = payload.final_cognitive_level_id
+            aggregate.completed_annotation_count = len(final_annotations)
+            aggregate.is_disputed = False
+            aggregate.finalized_at = datetime.utcnow()
+            question.annotation_status = QUESTION_STATUS_COMPLETED
+            question.annotation_count = len(final_annotations)
+            aggregate_id = aggregate.id
+            detail_json = {
+                "result_source": "aggregate",
+                "final_cognitive_level_id": payload.final_cognitive_level_id,
+                "competency_count": len(payload.competencies),
+                "completed_annotation_count": len(final_annotations),
+            }
+        else:
+            gold_label = self.db.scalar(
+                select(QuestionGoldLabel)
+                .options(
+                    selectinload(QuestionGoldLabel.competencies).selectinload(
+                        QuestionGoldCompetency.competency
+                    )
+                )
+                .where(QuestionGoldLabel.question_id == question.id)
+            )
+            if gold_label is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="当前题目还没有可修改的标注结果。",
+                )
+            self.db.execute(
+                delete(QuestionGoldCompetency).where(
+                    QuestionGoldCompetency.gold_label_id == gold_label.id
+                )
+            )
+            self.db.flush()
+            for competency in payload.competencies:
+                self.db.add(
+                    QuestionGoldCompetency(
+                        gold_label_id=gold_label.id,
+                        competency_id=competency.competency_id,
+                        level_value=competency.level_value,
+                    )
+                )
+            gold_label.cognitive_level_id = payload.final_cognitive_level_id
+            gold_label.label_source = "ADMIN_OVERRIDE"
+            aggregate_id = None
+            detail_json = {
+                "result_source": "gold_label",
+                "final_cognitive_level_id": payload.final_cognitive_level_id,
+                "competency_count": len(payload.competencies),
+                "gold_label_id": gold_label.id,
+            }
+
+        self._close_open_review_tasks(
+            question.id,
+            review_comment=payload.review_comment or "管理员已手动修改最终标注结果。",
+        )
+        self._append_review_log(
+            question_id=question.id,
+            aggregate_id=aggregate_id,
+            actor_user=admin_user,
+            action_code="ADMIN_OVERRIDE_FINAL_RESULT",
+            comment=payload.review_comment,
+            detail_json=detail_json,
+        )
+        self.db.commit()
+        refreshed = self._get_question_with_annotations(question_id, with_for_update=False)
+        return self._serialize_admin_question_review(refreshed)
+
     def _load_candidate_ids(self, data_scope: str) -> list[int]:
         stmt = (
             select(Question.id)
@@ -1262,6 +1375,15 @@ class AnnotationService:
             )
             .where(QuestionLabelAggregate.question_id == question.id)
         )
+        gold_label = self.db.scalar(
+            select(QuestionGoldLabel)
+            .options(
+                selectinload(QuestionGoldLabel.competencies).selectinload(
+                    QuestionGoldCompetency.competency
+                )
+            )
+            .where(QuestionGoldLabel.question_id == question.id)
+        )
         return AdminQuestionReviewOut(
             question_id=question.id,
             annotation_status=question.annotation_status,
@@ -1274,12 +1396,35 @@ class AnnotationService:
             ),
             open_review_task_count=self._open_review_task_count(question.id),
             aggregate=self._serialize_aggregate(aggregate) if aggregate is not None else None,
+            gold_label=self._serialize_gold_label(gold_label) if gold_label is not None else None,
             consensus=self._build_consensus_summary(
                 annotations,
                 required_annotations=question.required_annotations,
             ),
             annotations=self._serialize_admin_annotations(question.id),
             review_logs=self._serialize_review_logs(question.id),
+        )
+
+    def _serialize_gold_label(self, gold_label: QuestionGoldLabel) -> AnnotationAggregateOut:
+        return AnnotationAggregateOut(
+            id=gold_label.id,
+            question_id=gold_label.question_id,
+            final_cognitive_level_id=gold_label.cognitive_level_id,
+            agreement_score=None,
+            is_disputed=False,
+            completed_annotation_count=1,
+            finalized_at=gold_label.imported_at,
+            competencies=[
+                AnnotationAggregateCompetencyOut(
+                    competency_id=item.competency_id,
+                    competency_name=item.competency.name
+                    if item.competency
+                    else str(item.competency_id),
+                    level_value=item.level_value,
+                    agreement_score=None,
+                )
+                for item in gold_label.competencies
+            ],
         )
 
     def _serialize_review_logs(self, question_id: int) -> list[AnnotationReviewLogOut]:
@@ -1652,6 +1797,20 @@ class AnnotationService:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="存在无效的核心素养。",
+            )
+
+    def _validate_cognitive_level_id(self, cognitive_level_id: int | None) -> None:
+        if cognitive_level_id is None:
+            return
+        cognitive_level_exists = self.db.scalar(
+            select(func.count())
+            .select_from(CognitiveLevel)
+            .where(CognitiveLevel.id == cognitive_level_id)
+        )
+        if not cognitive_level_exists:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="存在无效的认知层级。",
             )
 
     def _serialize_selection_batch(self, batch: RecommendationBatch) -> SelectionBatchSummaryOut:

@@ -1,5 +1,6 @@
 import { apiClient } from "@/services/api-client";
 import type {
+  AdminAggregateOverrideRequest,
   AdminQuestionReview,
   AdminPoolResetRequest,
   AdminPoolResetResponse,
@@ -166,6 +167,17 @@ export async function rejectAdminQuestionReview(
 ) {
   const response = await apiClient.post<AdminQuestionReview>(
     `/annotations/admin/questions/${questionId}/reject`,
+    payload,
+  );
+  return response.data;
+}
+
+export async function overrideAdminQuestionReview(
+  questionId: number,
+  payload: AdminAggregateOverrideRequest,
+) {
+  const response = await apiClient.post<AdminQuestionReview>(
+    `/annotations/admin/questions/${questionId}/override`,
     payload,
   );
   return response.data;

@@ -12,6 +12,7 @@ import {
   getReviewTasks,
   getSelectionStrategies,
   getWorkspaceSummary,
+  overrideAdminQuestionReview,
   rejectAdminQuestionReview,
   resetAnnotationPools,
   rollbackSelectionBatch,
@@ -20,6 +21,7 @@ import {
   submitReviewTask,
 } from "@/services/annotations";
 import type {
+  AdminAggregateOverrideRequest,
   AdminReviewDecisionRequest,
   AdminSelectionRequest,
   AdminSelectionResponse,
@@ -250,6 +252,20 @@ export function useRejectAdminQuestionReview(questionId: number | null) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["annotations"] });
       queryClient.invalidateQueries({ queryKey: ["questions"] });
+    },
+  });
+}
+
+export function useOverrideAdminQuestionReview(questionId: number | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: AdminAggregateOverrideRequest) =>
+      overrideAdminQuestionReview(questionId as number, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["annotations"] });
+      queryClient.invalidateQueries({ queryKey: ["questions"] });
+      queryClient.invalidateQueries({ queryKey: ["visualization"] });
+      queryClient.invalidateQueries({ queryKey: ["label-insights"] });
     },
   });
 }

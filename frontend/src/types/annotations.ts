@@ -313,6 +313,7 @@ export type AdminQuestionReview = {
   remaining_annotation_count: number;
   open_review_task_count: number;
   aggregate?: AnnotationAggregate | null;
+  gold_label?: AnnotationAggregate | null;
   consensus: AnnotationConsensusSummary;
   annotations: AdminQuestionAnnotation[];
   review_logs: AnnotationReviewLog[];
@@ -322,4 +323,11 @@ export type AdminReviewDecisionRequest = {
   admin_user_id: number;
   review_comment?: string | null;
   additional_annotations?: number;
+};
+
+export type AdminAggregateOverrideRequest = {
+  admin_user_id: number;
+  final_cognitive_level_id?: number | null;
+  competencies: AnnotationCompetencyInput[];
+  review_comment?: string | null;
 };

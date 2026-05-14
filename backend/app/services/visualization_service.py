@@ -10,9 +10,25 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import get_settings
-from app.models.assessment import QuestionEmbedding
+from app.models.assessment import (
+    QuestionAggregateCompetency,
+    QuestionEmbedding,
+    QuestionGoldCompetency,
+    QuestionGoldLabel,
+    QuestionLabelAggregate,
+)
+from app.models.dictionary import CognitiveLevel, Competency, Grade
 from app.models.question import Question, QuestionContent
-from app.schemas.visualization import DistributionPoint, QuestionDistributionResponse
+from app.schemas.pagination import PageMeta
+from app.schemas.visualization import (
+    AnnotatedDistributionBucket,
+    AnnotatedOverviewResponse,
+    AnnotatedQuestionCompetencyOut,
+    AnnotatedQuestionListItemOut,
+    AnnotatedQuestionListResponse,
+    DistributionPoint,
+    QuestionDistributionResponse,
+)
 from app.services.embedding_service import EmbeddingService
 
 _DISTRIBUTION_CACHE_LIMIT = 12
@@ -66,17 +82,74 @@ class VisualizationService:
         return self._remember_distribution_cache(
             cache_key,
             QuestionDistributionResponse(
-            method=actual_method,
-            requested_method=method,
-            model_code=model.model_code,
-            embedding_count=len(points),
-            missing_embedding_count=max(
-                total_questions - self._embedded_question_count(model.id),
-                0,
+                method=actual_method,
+                requested_method=method,
+                model_code=model.model_code,
+                embedding_count=len(points),
+                missing_embedding_count=max(
+                    total_questions - self._embedded_question_count(model.id),
+                    0,
+                ),
+                summary=summary,
+                points=points,
             ),
-            summary=summary,
-            points=points,
-            ),
+        )
+
+    def annotated_overview(self) -> AnnotatedOverviewResponse:
+        records = self._load_labeled_records()
+        return AnnotatedOverviewResponse(
+            **self._build_labeled_overview(records),
+        )
+
+    def annotated_questions(
+        self,
+        *,
+        keyword: str | None = None,
+        subject_id: int | None = None,
+        grade_id: int | None = None,
+        edu_stage: str | None = None,
+        question_type_id: int | None = None,
+        result_source: str = "all",
+        page: int = 1,
+        page_size: int = 20,
+    ) -> AnnotatedQuestionListResponse:
+        records = self._load_labeled_records(
+            keyword=keyword,
+            subject_id=subject_id,
+            grade_id=grade_id,
+            edu_stage=edu_stage,
+            question_type_id=question_type_id,
+            result_source=result_source,
+        )
+        total = len(records)
+        start = (page - 1) * page_size
+        end = start + page_size
+        return AnnotatedQuestionListResponse(
+            items=records[start:end],
+            meta=PageMeta(page=page, page_size=page_size, total=total),
+        )
+
+    def annotated_filtered_overview(
+        self,
+        *,
+        keyword: str | None = None,
+        subject_id: int | None = None,
+        grade_id: int | None = None,
+        edu_stage: str | None = None,
+        question_type_id: int | None = None,
+        result_source: str = "all",
+    ) -> AnnotatedOverviewResponse:
+        total_records = self._load_labeled_records(result_source=result_source)
+        records = self._load_labeled_records(
+            keyword=keyword,
+            subject_id=subject_id,
+            grade_id=grade_id,
+            edu_stage=edu_stage,
+            question_type_id=question_type_id,
+            result_source=result_source,
+        )
+        return AnnotatedOverviewResponse(
+            **self._build_labeled_overview(records, total_count=len(total_records))
         )
 
     def _distribution_cache_key(
@@ -262,3 +335,261 @@ class VisualizationService:
             fingerprint = hashlib.sha1(str(question.id).encode("utf-8")).hexdigest()[:8]
             return f"Question {fingerprint}"
         return text[:120]
+
+    def _serialize_annotated_question(
+        self,
+        result: dict,
+    ) -> AnnotatedQuestionListItemOut:
+        question = result["question"]
+        competencies = result["competencies"]
+        return AnnotatedQuestionListItemOut(
+            question_id=question.id,
+            stem_preview=self._preview(question),
+            subject_name=question.subject.name,
+            grade_name=question.grade.grade_name if question.grade is not None else None,
+            edu_stage=question.grade.edu_stage if question.grade is not None else None,
+            question_type_name=question.question_type.name if question.question_type is not None else None,
+            annotation_status=question.annotation_status,
+            result_source=result["result_source"],
+            result_source_label=result["result_source_label"],
+            final_cognitive_level_id=result["final_cognitive_level_id"],
+            final_cognitive_level_name=result["final_cognitive_level_name"],
+            agreement_score=result["agreement_score"],
+            completed_annotation_count=result["completed_annotation_count"],
+            finalized_at=result["finalized_at"],
+            competencies=[
+                AnnotatedQuestionCompetencyOut(
+                    competency_id=item["competency_id"],
+                    competency_name=item["competency_name"],
+                    level_value=item["level_value"],
+                    agreement_score=item["agreement_score"],
+                )
+                for item in competencies
+            ],
+        )
+
+    def _load_labeled_records(
+        self,
+        *,
+        keyword: str | None = None,
+        subject_id: int | None = None,
+        grade_id: int | None = None,
+        edu_stage: str | None = None,
+        question_type_id: int | None = None,
+        result_source: str = "all",
+    ) -> list[AnnotatedQuestionListItemOut]:
+        aggregate_records: list[AnnotatedQuestionListItemOut] = []
+        gold_records: list[AnnotatedQuestionListItemOut] = []
+        aggregate_question_ids: set[int] = set()
+
+        if result_source in {"all", "aggregate"}:
+            aggregate_stmt = (
+                select(QuestionLabelAggregate)
+                .join(Question, Question.id == QuestionLabelAggregate.question_id)
+                .options(
+                    selectinload(QuestionLabelAggregate.question).selectinload(Question.subject),
+                    selectinload(QuestionLabelAggregate.question).selectinload(Question.grade),
+                    selectinload(QuestionLabelAggregate.question).selectinload(Question.question_type),
+                    selectinload(QuestionLabelAggregate.question).selectinload(Question.content),
+                    selectinload(QuestionLabelAggregate.final_cognitive_level),
+                    selectinload(QuestionLabelAggregate.competencies).selectinload(
+                        QuestionAggregateCompetency.competency
+                    ),
+                )
+                .where(Question.annotation_status == "COMPLETED")
+            )
+            aggregate_stmt = self._apply_question_filters(
+                aggregate_stmt,
+                keyword=keyword,
+                subject_id=subject_id,
+                grade_id=grade_id,
+                edu_stage=edu_stage,
+                question_type_id=question_type_id,
+            )
+            aggregates = list(self.db.scalars(aggregate_stmt).unique())
+            aggregate_question_ids = {item.question_id for item in aggregates}
+            aggregate_records = [
+                self._serialize_annotated_question(
+                    {
+                        "question": item.question,
+                        "result_source": "aggregate",
+                        "result_source_label": "最终标注",
+                        "final_cognitive_level_id": item.final_cognitive_level_id,
+                        "final_cognitive_level_name": item.final_cognitive_level.name
+                        if item.final_cognitive_level is not None
+                        else None,
+                        "agreement_score": float(item.agreement_score)
+                        if item.agreement_score is not None
+                        else None,
+                        "completed_annotation_count": item.completed_annotation_count,
+                        "finalized_at": item.finalized_at,
+                        "competencies": [
+                            {
+                                "competency_id": competency.competency_id,
+                                "competency_name": competency.competency.name
+                                if competency.competency is not None
+                                else str(competency.competency_id),
+                                "level_value": competency.level_value,
+                                "agreement_score": float(competency.agreement_score)
+                                if competency.agreement_score is not None
+                                else None,
+                            }
+                            for competency in item.competencies
+                        ],
+                    }
+                )
+                for item in aggregates
+            ]
+
+        if result_source in {"all", "gold"}:
+            gold_stmt = (
+                select(QuestionGoldLabel)
+                .join(Question, Question.id == QuestionGoldLabel.question_id)
+                .options(
+                    selectinload(QuestionGoldLabel.question).selectinload(Question.subject),
+                    selectinload(QuestionGoldLabel.question).selectinload(Question.grade),
+                    selectinload(QuestionGoldLabel.question).selectinload(Question.question_type),
+                    selectinload(QuestionGoldLabel.question).selectinload(Question.content),
+                    selectinload(QuestionGoldLabel.cognitive_level),
+                    selectinload(QuestionGoldLabel.competencies).selectinload(
+                        QuestionGoldCompetency.competency
+                    ),
+                )
+            )
+            if aggregate_question_ids:
+                gold_stmt = gold_stmt.where(~QuestionGoldLabel.question_id.in_(aggregate_question_ids))
+            gold_stmt = self._apply_question_filters(
+                gold_stmt,
+                keyword=keyword,
+                subject_id=subject_id,
+                grade_id=grade_id,
+                edu_stage=edu_stage,
+                question_type_id=question_type_id,
+            )
+            golds = list(self.db.scalars(gold_stmt).unique())
+            gold_records = [
+                self._serialize_annotated_question(
+                    {
+                        "question": item.question,
+                        "result_source": "gold",
+                        "result_source_label": "金标",
+                        "final_cognitive_level_id": item.cognitive_level_id,
+                        "final_cognitive_level_name": item.cognitive_level.name
+                        if item.cognitive_level is not None
+                        else None,
+                        "agreement_score": None,
+                        "completed_annotation_count": 1,
+                        "finalized_at": item.imported_at,
+                        "competencies": [
+                            {
+                                "competency_id": competency.competency_id,
+                                "competency_name": competency.competency.name
+                                if competency.competency is not None
+                                else str(competency.competency_id),
+                                "level_value": competency.level_value,
+                                "agreement_score": None,
+                            }
+                            for competency in item.competencies
+                        ],
+                    }
+                )
+                for item in golds
+            ]
+
+        combined = aggregate_records + gold_records
+        combined.sort(
+            key=lambda item: (
+                item.finalized_at.isoformat() if item.finalized_at is not None else "",
+                item.question_id,
+            ),
+            reverse=True,
+        )
+        return combined
+
+    def _build_labeled_overview(
+        self,
+        records: list[AnnotatedQuestionListItemOut],
+        total_count: int | None = None,
+    ) -> dict:
+        cognitive_counter: Counter[tuple[str, str]] = Counter()
+        competency_counter: Counter[tuple[str, str]] = Counter()
+        competency_level_counter: Counter[tuple[str, str]] = Counter()
+        grade_counter: Counter[tuple[str, str]] = Counter()
+        aggregate_scores: list[float] = []
+        gold_count = 0
+        aggregate_count = 0
+
+        for record in records:
+            if record.final_cognitive_level_name:
+                cognitive_counter[(str(record.final_cognitive_level_id), record.final_cognitive_level_name)] += 1
+            if record.grade_name:
+                grade_counter[(record.grade_name, record.grade_name)] += 1
+            if record.result_source == "gold":
+                gold_count += 1
+            else:
+                aggregate_count += 1
+                if record.agreement_score is not None:
+                    aggregate_scores.append(record.agreement_score)
+            for competency in record.competencies:
+                if competency.level_value <= 0:
+                    continue
+                competency_counter[(str(competency.competency_id), competency.competency_name)] += 1
+                competency_level_counter[
+                    (
+                        f"{competency.competency_id}_L{competency.level_value}",
+                        f"{competency.competency_name} L{competency.level_value}",
+                    )
+                ] += 1
+
+        average_agreement_score = (
+            round(sum(aggregate_scores) / len(aggregate_scores), 2) if aggregate_scores else None
+        )
+        return {
+            "total_labeled_questions": total_count if total_count is not None else len(records),
+            "filtered_question_count": len(records),
+            "gold_labeled_questions": gold_count,
+            "aggregate_labeled_questions": aggregate_count,
+            "total_completed_questions": len(records),
+            "disputed_questions": 0,
+            "average_agreement_score": average_agreement_score,
+            "cognitive_level_distribution": [
+                AnnotatedDistributionBucket(key=key, label=label, count=count)
+                for (key, label), count in cognitive_counter.most_common()
+            ],
+            "competency_distribution": [
+                AnnotatedDistributionBucket(key=key, label=label, count=count)
+                for (key, label), count in competency_counter.most_common()
+            ],
+            "competency_level_distribution": [
+                AnnotatedDistributionBucket(key=key, label=label, count=count)
+                for (key, label), count in competency_level_counter.most_common()
+            ],
+            "grade_distribution": [
+                AnnotatedDistributionBucket(key=key, label=label, count=count)
+                for (key, label), count in grade_counter.most_common()
+            ],
+        }
+
+    def _apply_question_filters(
+        self,
+        stmt,
+        *,
+        keyword: str | None = None,
+        subject_id: int | None = None,
+        grade_id: int | None = None,
+        edu_stage: str | None = None,
+        question_type_id: int | None = None,
+    ):
+        if keyword:
+            stmt = stmt.join(QuestionContent, QuestionContent.question_id == Question.id).where(
+                QuestionContent.stem_text.contains(keyword.strip())
+            )
+        if subject_id is not None:
+            stmt = stmt.where(Question.subject_id == subject_id)
+        if grade_id is not None:
+            stmt = stmt.where(Question.grade_id == grade_id)
+        if edu_stage is not None:
+            stmt = stmt.join(Grade, Grade.id == Question.grade_id).where(Grade.edu_stage == edu_stage)
+        if question_type_id is not None:
+            stmt = stmt.where(Question.question_type_id == question_type_id)
+        return stmt

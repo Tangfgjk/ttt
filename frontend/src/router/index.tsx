@@ -9,6 +9,7 @@ import { DedupReviewPage } from "@/pages/dedup-review";
 import { HomePage } from "@/pages/home";
 import { ImportContentHashMatchesPage } from "@/pages/import-content-hash-matches";
 import { ImportsPage } from "@/pages/imports";
+import { LabelInsightsPage } from "@/pages/label-insights";
 import { LoginPage } from "@/pages/login";
 import { QuestionsPage } from "@/pages/questions";
 import { ReviewPage } from "@/pages/review";
@@ -48,6 +49,10 @@ export const router = createBrowserRouter([
               {
                 path: "visualization",
                 element: <VisualizationPage />,
+              },
+              {
+                path: "label-insights",
+                element: <LabelInsightsPage />,
               },
             ],
           },
