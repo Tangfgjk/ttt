@@ -36,3 +36,57 @@ export type EmbeddingRebuildResponse = {
   skipped: number;
   failed: number;
 };
+
+export type AnnotatedDistributionBucket = {
+  key: string;
+  label: string;
+  count: number;
+};
+
+export type AnnotatedOverview = {
+  total_labeled_questions: number;
+  filtered_question_count: number;
+  gold_labeled_questions: number;
+  aggregate_labeled_questions: number;
+  total_completed_questions: number;
+  disputed_questions: number;
+  average_agreement_score?: number | null;
+  cognitive_level_distribution: AnnotatedDistributionBucket[];
+  competency_distribution: AnnotatedDistributionBucket[];
+  competency_level_distribution: AnnotatedDistributionBucket[];
+  grade_distribution: AnnotatedDistributionBucket[];
+};
+
+export type AnnotatedQuestionCompetency = {
+  competency_id: number;
+  competency_name: string;
+  level_value: number;
+  agreement_score?: number | null;
+};
+
+export type AnnotatedQuestionListItem = {
+  question_id: number;
+  stem_preview: string;
+  subject_name: string;
+  grade_name?: string | null;
+  edu_stage?: string | null;
+  question_type_name?: string | null;
+  annotation_status: string;
+  result_source: string;
+  result_source_label: string;
+  final_cognitive_level_id?: number | null;
+  final_cognitive_level_name?: string | null;
+  agreement_score?: number | null;
+  completed_annotation_count: number;
+  finalized_at?: string | null;
+  competencies: AnnotatedQuestionCompetency[];
+};
+
+export type AnnotatedQuestionListResponse = {
+  items: AnnotatedQuestionListItem[];
+  meta: {
+    page: number;
+    page_size: number;
+    total: number;
+  };
+};

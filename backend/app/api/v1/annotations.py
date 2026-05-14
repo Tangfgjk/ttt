@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.schemas.annotations import (
+    AdminAggregateOverrideRequest,
     AdminQuestionReviewOut,
     AdminPoolResetRequest,
     AdminPoolResetResponse,
@@ -206,3 +207,12 @@ def reject_admin_question_review(
     db: Session = Depends(get_db),
 ) -> AdminQuestionReviewOut:
     return AnnotationService(db).reject_admin_question_review(question_id, payload)
+
+
+@router.post("/admin/questions/{question_id}/override", response_model=AdminQuestionReviewOut)
+def override_admin_question_review(
+    question_id: int,
+    payload: AdminAggregateOverrideRequest,
+    db: Session = Depends(get_db),
+) -> AdminQuestionReviewOut:
+    return AnnotationService(db).override_admin_question_review(question_id, payload)

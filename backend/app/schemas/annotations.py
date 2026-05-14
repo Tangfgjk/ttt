@@ -331,6 +331,7 @@ class AdminQuestionReviewOut(BaseModel):
     remaining_annotation_count: int
     open_review_task_count: int
     aggregate: AnnotationAggregateOut | None = None
+    gold_label: AnnotationAggregateOut | None = None
     consensus: AnnotationConsensusSummaryOut
     annotations: list[AdminQuestionAnnotationOut]
     review_logs: list[AnnotationReviewLogOut]
@@ -340,3 +341,10 @@ class AdminReviewDecisionRequest(BaseModel):
     admin_user_id: int
     review_comment: str | None = None
     additional_annotations: int = Field(default=1, ge=1, le=5)
+
+
+class AdminAggregateOverrideRequest(BaseModel):
+    admin_user_id: int
+    final_cognitive_level_id: int | None = None
+    competencies: list[AnnotationCompetencyInput] = Field(default_factory=list)
+    review_comment: str | None = None

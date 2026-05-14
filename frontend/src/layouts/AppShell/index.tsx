@@ -88,13 +88,19 @@ const menuItems: AppMenuItem[] = [
   {
     key: "/visualization",
     icon: <BarChartOutlined />,
-    label: "可视化",
+    label: "嵌入可视化",
     roles: ["admin"],
     children: [
       { key: "/visualization#visualization-status", label: "嵌入概览" },
       { key: "/visualization#visualization-chart", label: "分布图" },
       { key: "/visualization#visualization-detail", label: "选点详情" },
     ],
+  },
+  {
+    key: "/label-insights",
+    icon: <BarChartOutlined />,
+    label: "标注结果分析",
+    roles: ["admin"],
   },
   {
     key: "/admin",

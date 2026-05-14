@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.schemas.visualization import (
+    AnnotatedOverviewResponse,
+    AnnotatedQuestionListResponse,
     EmbeddingRebuildRequest,
     EmbeddingRebuildResponse,
     EmbeddingStatusResponse,
@@ -47,4 +49,48 @@ async def get_question_distribution(
         method=method,
         status_filter=status_filter,
         limit=limit,
+    )
+
+
+@router.get("/annotated-overview", response_model=AnnotatedOverviewResponse)
+async def get_annotated_overview(
+    keyword: str | None = Query(default=None),
+    subject_id: int | None = Query(default=None),
+    grade_id: int | None = Query(default=None),
+    edu_stage: str | None = Query(default=None),
+    question_type_id: int | None = Query(default=None),
+    result_source: str = Query(default="all"),
+    db: Session = Depends(get_db),
+) -> AnnotatedOverviewResponse:
+    return VisualizationService(db).annotated_filtered_overview(
+        keyword=keyword,
+        subject_id=subject_id,
+        grade_id=grade_id,
+        edu_stage=edu_stage,
+        question_type_id=question_type_id,
+        result_source=result_source,
+    )
+
+
+@router.get("/annotated-questions", response_model=AnnotatedQuestionListResponse)
+async def list_annotated_questions(
+    keyword: str | None = Query(default=None),
+    subject_id: int | None = Query(default=None),
+    grade_id: int | None = Query(default=None),
+    edu_stage: str | None = Query(default=None),
+    question_type_id: int | None = Query(default=None),
+    result_source: str = Query(default="all"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> AnnotatedQuestionListResponse:
+    return VisualizationService(db).annotated_questions(
+        keyword=keyword,
+        subject_id=subject_id,
+        grade_id=grade_id,
+        edu_stage=edu_stage,
+        question_type_id=question_type_id,
+        result_source=result_source,
+        page=page,
+        page_size=page_size,
     )
