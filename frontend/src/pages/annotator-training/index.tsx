@@ -27,7 +27,7 @@ import {
   message,
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import { useAuthStore } from "@/app/store/auth-store";
 import { CompetencyHelpPopover } from "@/components/competency-help-popover";
@@ -123,6 +123,7 @@ function formatAttemptTime(value: string) {
 export function AnnotatorTrainingPage() {
   const [form] = Form.useForm();
   const navigate = useNavigate();
+  const location = useLocation();
   const session = useAuthStore((state) => state.session);
   const setSession = useAuthStore((state) => state.setSession);
   const userId = session?.id ?? null;
@@ -181,6 +182,18 @@ export function AnnotatorTrainingPage() {
     { label: "实战校准", value: "practice" },
     ...(reviewAttempts.length ? [{ label: "结果复盘", value: "result" }] : []),
   ];
+
+  useEffect(() => {
+    const state = location.state as { trainingRequired?: boolean; attemptedPath?: string } | null;
+    if (!state?.trainingRequired) {
+      return;
+    }
+
+    const targetLabel =
+      state.attemptedPath === "/annotation-history" ? "我的标注记录" : "标注工作台";
+    message.info(`请先完成培训准入，培训通过后才能进入${targetLabel}。`);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.pathname, location.state, navigate]);
 
   useEffect(() => {
     if (!module || !visibleCompetencies.length) {
@@ -323,7 +336,7 @@ export function AnnotatorTrainingPage() {
             标注员培训与准入
           </Typography.Title>
           <Typography.Paragraph style={{ marginBottom: 0 }}>
-            先用短导学建立判断框架，再进入单题校准。提交后会进入结果复盘页，逐题查看你的选择、标准答案和解释。
+            先用简明导学把素养边界和判题抓手理清，再进入单题校准。提交后会进入结果复盘页，逐题查看你的选择、标准答案和解释。
           </Typography.Paragraph>
           <Space wrap>
             <Segmented
@@ -441,25 +454,25 @@ function KnowledgeGuide({
               showIcon
               icon={<ReadOutlined />}
               message={module.summary}
-              description="先看“这道题真正靠什么完成”，再决定哪些素养从 0 提升到 1/2/3。默认 0 不是漏标，而是明确判断该素养不是本题重点。"
+              description="先看“这道题真正靠什么完成”，再决定哪些素养需要从 0 提升到 1/2/3。先抓主导动作，再看辅助支撑；默认 0 不是漏标，而是明确判断该素养不是本题重点。"
             />
             <Row gutter={[16, 16]}>
               <Col xs={24} lg={8}>
                 <GuideStep
                   title="第一眼：找核心动作"
-                  text="先别急着逐项打分，先问自己：学生解这道题最关键的动作是什么，是抽象关系、计算变形、读图判断，还是推理论证？"
+                  text="先别急着逐项打分，先问自己：学生解这道题最关键的动作是什么，是抽象关系、计算变形、读图判断、建模转化，还是推理论证？"
                 />
               </Col>
               <Col xs={24} lg={8}>
                 <GuideStep
                   title="第二眼：分清主次"
-                  text="一个素养只是出现，不代表就要给高层级。辅助理解给 1 级，支撑关键步骤给 2 级，决定整题路径才给 3 级。"
+                  text="一个素养只是出现，不代表就要给高层级。辅助理解或局部使用给 1 级，支撑关键步骤给 2 级，决定整题路径才给 3 级。"
                 />
               </Col>
               <Col xs={24} lg={8}>
                 <GuideStep
                   title="第三眼：敢于保留 0"
-                  text="没有体现就保持 0。0 级会参与系统一致性投票，它不是空白，而是你明确判断“这道题不靠这个素养”。"
+                  text="没有体现就保持 0。0 级会参与系统一致性投票，它不是空白，而是你明确判断“这道题不主要依赖这个素养”。"
                 />
               </Col>
             </Row>

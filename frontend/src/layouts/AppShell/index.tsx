@@ -10,7 +10,7 @@ import {
   SearchOutlined,
   TeamOutlined,
 } from "@ant-design/icons";
-import { Avatar, Badge, Button, FloatButton, Input, Layout, Space, Tag, Typography } from "antd";
+import { App, Avatar, Badge, Button, FloatButton, Input, Layout, Space, Tag, Typography } from "antd";
 import type { ReactNode } from "react";
 import { useMemo } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -45,10 +45,10 @@ const menuItems: AppMenuItem[] = [
     label: "项目总览",
     roles: ["admin"],
     children: [
-      { key: "/admin/overview#overview-hero", label: "整体概况" },
-      { key: "/admin/overview#overview-metrics", label: "关键指标" },
-      { key: "/admin/overview#overview-timeline", label: "阶段进度" },
-      { key: "/admin/overview#overview-next", label: "下一步计划" },
+      { key: "/admin/overview#overview-hero", label: "系统定位" },
+      { key: "/admin/overview#overview-metrics", label: "标签体系" },
+      { key: "/admin/overview#overview-definitions", label: "核心素养" },
+      { key: "/admin/overview#overview-references", label: "标准依据" },
     ],
   },
   {
@@ -162,6 +162,7 @@ function isMenuItemActive(item: AppMenuItem, selectedKey: string, pathname: stri
 }
 
 export function AppShell() {
+  const { message } = App.useApp();
   const navigate = useNavigate();
   const location = useLocation();
   const session = useAuthStore((state) => state.session);
@@ -173,6 +174,18 @@ export function AppShell() {
   );
   const selectedKey = getSelectedMenuKey(location.pathname, location.hash, visibleMenuItems);
   const handleNavigation = (key: string) => {
+    const trainingScope = session?.trainingScope ?? "none";
+    const needsTraining =
+      session?.role === "annotator" &&
+      trainingScope === "none" &&
+      ["/annotate", "/annotation-history"].includes(key);
+
+    if (needsTraining) {
+      message.warning("请先完成培训准入，培训通过后才能进入标注工作台和我的标注记录。");
+      navigate("/annotator-training");
+      return;
+    }
+
     navigate(key);
     if (!key.includes("#") && key === location.pathname) {
       window.requestAnimationFrame(() => {

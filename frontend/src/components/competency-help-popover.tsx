@@ -8,10 +8,10 @@ type CompetencyHelpPopoverProps = {
 };
 
 const LEVEL_HINTS = [
-  { level: 0, label: "0级", description: "不体现这个素养，或不是这道题的核心关注点。" },
-  { level: 1, label: "1级", description: "有体现，但更多是辅助理解或局部步骤。" },
-  { level: 2, label: "2级", description: "支撑关键求解过程，对作答有明显作用。" },
-  { level: 3, label: "3级", description: "决定整题理解或求解路径，是核心驱动力。" },
+  { level: 0, label: "0级", description: "该素养基本不参与本题求解，或不需要单独标出。" },
+  { level: 1, label: "1级", description: "有体现，但主要用于辅助理解、读图或局部步骤。" },
+  { level: 2, label: "2级", description: "支撑关键求解过程，对完成题目有明显作用。" },
+  { level: 3, label: "3级", description: "主导整题的理解、转化或求解路径，是核心素养。" },
 ];
 
 export function CompetencyHelpPopover({

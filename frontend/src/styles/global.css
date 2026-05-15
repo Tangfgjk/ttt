@@ -775,6 +775,331 @@ body {
   order: 2;
 }
 
+.overview-page .ant-card-head {
+  min-height: 56px;
+  padding-inline: 18px;
+  border-bottom-color: rgba(23, 37, 47, 0.06);
+}
+
+.overview-page .ant-card-head-title {
+  font-weight: 700;
+}
+
+.overview-hero {
+  overflow: hidden;
+  background:
+    linear-gradient(135deg, rgba(15, 118, 110, 0.08), rgba(34, 197, 94, 0.06)),
+    rgba(255, 255, 255, 0.98);
+}
+
+.overview-hero .ant-card-body {
+  padding: 24px;
+}
+
+.overview-hero__content {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
+  gap: 24px;
+  align-items: stretch;
+}
+
+.overview-hero__copy {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.overview-hero__paragraph {
+  margin: 0;
+  color: rgba(23, 37, 47, 0.74);
+  line-height: 1.75;
+}
+
+.overview-hero__controls {
+  display: grid;
+  gap: 12px;
+}
+
+.overview-hero__control-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid rgba(15, 118, 110, 0.12);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.overview-hero__control-card--hint {
+  flex-direction: row;
+  align-items: flex-start;
+}
+
+.overview-summary-card,
+.overview-board-card {
+  height: 100%;
+}
+
+.overview-summary-card .ant-card-body {
+  min-height: 150px;
+}
+
+.overview-board-card .ant-card-head-title,
+.overview-board-card .ant-typography,
+.overview-summary-card .ant-typography {
+  color: #16202a;
+}
+
+.overview-board-card .ant-card-head {
+  min-height: 56px;
+}
+
+.overview-board-card .ant-card-head-title {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.overview-summary-card__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  background: rgba(15, 118, 110, 0.1);
+  color: #0f766e;
+  font-size: 16px;
+}
+
+.overview-dimension-grid,
+.overview-definition-grid,
+.overview-cognitive-grid,
+.overview-source-list {
+  display: grid;
+  gap: 12px;
+}
+
+.overview-dimension-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.overview-definition-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.overview-definition-grid--single {
+  grid-template-columns: 1fr;
+}
+
+.overview-cognitive-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.overview-source-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.overview-dimension-card,
+.overview-definition-card,
+.overview-cognitive-card,
+.overview-source-card,
+.overview-stage-panel {
+  padding: 18px 20px;
+  border: 1px solid rgba(23, 37, 47, 0.08);
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.overview-definition-card .ant-typography:first-child {
+  font-size: 18px;
+  line-height: 1.4;
+}
+
+.overview-definition-summary {
+  color: #314252;
+  font-size: 16px;
+  line-height: 1.9;
+}
+
+.overview-definition-body {
+  color: #314252;
+  font-size: 16px;
+  line-height: 1.9;
+}
+
+.overview-source-note {
+  white-space: normal;
+  line-height: 1.6;
+  padding-block: 6px;
+}
+
+.overview-step-list,
+.overview-level-stack,
+.overview-quality-callout {
+  display: grid;
+  gap: 12px;
+}
+
+.overview-step-item,
+.overview-level-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.overview-step-item__index,
+.overview-level-item__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 30px;
+  padding-inline: 8px;
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.1);
+  color: #0f766e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.overview-standard-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.overview-standard-summary__block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(247, 250, 252, 0.9);
+}
+
+.overview-bullet-list {
+  display: grid;
+  gap: 10px;
+}
+
+.overview-bullet-list__item {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.overview-bullet-list__dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 7px;
+  border-radius: 999px;
+  background: #0f766e;
+}
+
+.overview-section-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.overview-filter-bar {
+  display: grid;
+  gap: 16px;
+}
+
+.overview-filter-bar__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.overview-filter-bar__controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.overview-filter-group {
+  display: grid;
+  gap: 8px;
+}
+
+.overview-stage-lock {
+  min-width: 240px;
+}
+
+.overview-stage-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.overview-skill-tag {
+  padding-inline: 10px;
+}
+
+.overview-quality-callout {
+  margin-top: 16px;
+}
+
+.overview-quality-callout__item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(247, 250, 252, 0.92);
+}
+
+@media (max-width: 1100px) {
+  .overview-hero__content,
+  .overview-standard-summary {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .overview-dimension-grid,
+  .overview-definition-grid,
+  .overview-cognitive-grid,
+  .overview-source-list,
+  .overview-filter-bar__controls {
+    grid-template-columns: 1fr;
+  }
+
+  .overview-section-toolbar {
+    flex-direction: column;
+  }
+
+  .overview-filter-bar__header {
+    flex-direction: column;
+  }
+
+  .overview-stage-lock {
+    width: 100%;
+    min-width: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .overview-hero .ant-card-body {
+    padding: 18px 16px;
+  }
+
+  .overview-hero__control-card,
+  .overview-dimension-card,
+  .overview-definition-card,
+  .overview-cognitive-card,
+  .overview-source-card,
+  .overview-stage-panel {
+    padding: 14px 16px;
+  }
+}
+
 .project-timeline {
   max-height: 360px;
   overflow: auto;

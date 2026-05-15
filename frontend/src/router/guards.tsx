@@ -29,6 +29,7 @@ export function RequireRole({ allowedRoles }: { allowedRoles: UserRole[] }) {
 
 export function RequireTraining() {
   const session = useAuthStore((state) => state.session);
+  const location = useLocation();
 
   if (!session) {
     return <Navigate to="/login" replace />;
@@ -36,7 +37,13 @@ export function RequireTraining() {
 
   const trainingScope = session.trainingScope ?? "none";
   if (session.role === "annotator" && trainingScope === "none") {
-    return <Navigate to="/annotator-training" replace />;
+    return (
+      <Navigate
+        to="/annotator-training"
+        replace
+        state={{ trainingRequired: true, attemptedPath: location.pathname }}
+      />
+    );
   }
 
   return <Outlet />;
