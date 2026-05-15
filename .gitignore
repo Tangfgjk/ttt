@@ -24,6 +24,8 @@ frontend/*.tsbuildinfo
 frontend/vite.config.d.ts
 frontend/vite.config.js
 
+deploy/compose/.env
+
 backend_uvicorn.log
 frontend_vite.log
 mcp_filesystem.log

@@ -27,6 +27,7 @@ K12 学科标注平台是一个面向 K12 多学科题目的导入、判重、�
 ```text
 ttt/
 ├── backend/              # FastAPI 后端服务、数据库模型、业务服务、任务队列
+├── deploy/               # Docker Compose、Dockerfile、Nginx 等部署资产
 ├── frontend/             # React 前端工程
 ├── docs/design/          # 阶段设计、汇报、操作文档
 ├── MLM/                  # 本地预训练模型或 embedding 模型目录
@@ -113,6 +114,11 @@ npm.cmd run build
 
 ## 重要文档
 
+- [V7 文档索引](docs/design/v7/README.md)
+- [V7 Docker Compose 部署设计方案](docs/design/v7/V7-Docker%20Compose%20部署设计方案.md)
+- [V7 Docker Compose 实施草案](docs/design/v7/V7-Docker%20Compose%20实施草案.md)
+- [V7 服务器部署操作手册](docs/design/v7/V7-%E6%9C%8D%E5%8A%A1%E5%99%A8%E9%83%A8%E7%BD%B2%E6%93%8D%E4%BD%9C%E6%89%8B%E5%86%8C.md)
+- [部署资产说明](deploy/README.md)
 - [V6 文档索引](docs/design/v6/README.md)
 - [V6 一阶段初版系统操作手册](docs/design/v6/V6-一阶段初版系统操作手册.md)
 - [V6 一阶段收尾总结](docs/design/v6/V6-一阶段收尾总结.md)

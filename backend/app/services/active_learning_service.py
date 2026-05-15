@@ -497,6 +497,44 @@ class ActiveLearningService:
             snapshot_created_before=cutoff,
         )
 
+    def _count_incremental_candidates(
+        self,
+        *,
+        data_scope: str,
+        created_after: datetime | None,
+    ) -> int:
+        stmt = (
+            select(func.count(Question.id))
+            .join(QuestionContent, QuestionContent.question_id == Question.id)
+            .where(Question.source_status == QUESTION_SOURCE_ACTIVE)
+            .where(QuestionContent.stem_text != "")
+        )
+        if data_scope == "pending":
+            stmt = stmt.where(Question.annotation_status == QUESTION_STATUS_PENDING)
+        if created_after is not None:
+            stmt = stmt.where(Question.created_at > created_after)
+        return int(self.db.scalar(stmt) or 0)
+
+    def _count_incremental_anchor_questions(
+        self,
+        *,
+        data_scope: str,
+        up_to_created_at: datetime | None,
+    ) -> int:
+        stmt = (
+            select(func.count(func.distinct(RecommendationItem.question_id)))
+            .join(RecommendationBatch, RecommendationBatch.id == RecommendationItem.batch_id)
+            .join(
+                ModelCoresetRun,
+                ModelCoresetRun.recommendation_batch_id == RecommendationBatch.id,
+            )
+            .where(ModelCoresetRun.status == RUN_STATUS_SUCCESS)
+            .where(ModelCoresetRun.data_scope == data_scope)
+        )
+        if up_to_created_at is not None:
+            stmt = stmt.where(ModelCoresetRun.created_at <= up_to_created_at)
+        return int(self.db.scalar(stmt) or 0)
+
     def _model_versions(self) -> list[ModelVersion]:
         return list(
             self.db.scalars(
