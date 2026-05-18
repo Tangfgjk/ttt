@@ -24,6 +24,7 @@ SelectionStrategy = Literal[
     "moe",
 ]
 SelectionDataScope = Literal["all", "pending"]
+AnnotatorCount = Literal[1, 2, 3]
 
 
 class PoolSummaryItem(BaseModel):
@@ -33,6 +34,32 @@ class PoolSummaryItem(BaseModel):
 
 class PoolSummaryResponse(BaseModel):
     items: list[PoolSummaryItem]
+
+
+class AnnotationPolicySettingsOut(BaseModel):
+    annotator_count: AnnotatorCount
+    review_required: bool
+    strategy_description: str
+    sync_status: "AnnotationPolicySyncStatusOut"
+
+
+class AnnotationPolicySyncStatusOut(BaseModel):
+    status: Literal["idle", "running", "completed", "failed"]
+    target_annotator_count: AnnotatorCount
+    affected_question_count: int
+    updated_question_count: int
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    error_message: str | None = None
+
+
+class AnnotationPolicyUpdateRequest(BaseModel):
+    admin_user_id: int
+    annotator_count: AnnotatorCount
+
+
+class AnnotationPolicyUpdateResponse(AnnotationPolicySettingsOut):
+    affected_question_count: int
 
 
 class WorkspaceSummaryOut(BaseModel):
@@ -73,6 +100,7 @@ class SelectionBatchSummaryOut(BaseModel):
     id: int
     batch_no: str
     algorithm_code: str
+    source_run_no: str | None = None
     triggered_by_user_id: int | None = None
     created_at: datetime
     requested_count: int
@@ -108,7 +136,7 @@ class SelectionBatchRollbackResponse(BaseModel):
 
 class ClaimAnnotationRequest(BaseModel):
     annotator_user_id: int
-    count: int = Field(default=10, ge=1, le=100)
+    count: int = Field(default=50, ge=1)
 
 
 class ClaimAnnotationResponse(BaseModel):
@@ -188,9 +216,14 @@ class AnnotatorHistoryListResponse(BaseModel):
     meta: PageMeta
 
 
+AnnotatorHistoryReviewState = Literal["NOT_REQUIRED", "PENDING", "COMPLETED"]
+AnnotatorHistoryAdoptionStatus = Literal["PENDING", "PASSED", "OVERRIDDEN"]
+AnnotatorHistoryTimeRange = Literal["7d", "30d"]
+
+
 class ClaimReviewTaskRequest(BaseModel):
     reviewer_user_id: int
-    count: int = Field(default=5, ge=1, le=50)
+    count: int = Field(default=5, ge=1, le=1000)
 
 
 class AnnotationAggregateCompetencyOut(BaseModel):

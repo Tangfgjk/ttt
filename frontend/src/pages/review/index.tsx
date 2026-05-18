@@ -4,29 +4,34 @@ import {
   Button,
   Card,
   Col,
+  Drawer,
   Empty,
   Form,
   Input,
-  InputNumber,
   List,
   Radio,
+  Result,
   Row,
   Space,
+  Spin,
   Tag,
   Typography,
   message,
 } from "antd";
 import { useEffect, useMemo, useState } from "react";
 
+import { formatBackendDateTime } from "@/app/date-time";
 import { useAuthStore } from "@/app/store/auth-store";
+import { QuestionDetailSections } from "@/components/question-detail-sections";
 import { QuestionRichText } from "@/components/question-rich-text";
+import { annotationStatusLabelMap } from "@/constants/annotation-status";
 import {
   useAnnotationPoolSummary,
   useClaimReviewTasks,
   useReviewTasks,
   useSubmitReviewTask,
 } from "@/modules/annotations/hooks";
-import { useCompetencies } from "@/modules/question-bank/hooks";
+import { useCompetencies, useQuestionDetail } from "@/modules/question-bank/hooks";
 import type { ReviewTask } from "@/types/annotations";
 import type { CompetencyItem } from "@/types/dictionary";
 
@@ -75,12 +80,26 @@ function filterCompetenciesByStage(
   return items;
 }
 
+function confidenceLevelMeta(level?: number | null) {
+  if (level == null) return { label: "-", color: "default" as const };
+  if (level >= 5) return { label: "高", color: "red" as const };
+  if (level >= 3) return { label: "中", color: "gold" as const };
+  return { label: "低", color: "blue" as const };
+}
+
+function getConsensusStatusLabel(status: string) {
+  if (status === "DISPUTED") return "存在分歧";
+  if (status === "CONSENSUS") return "已达成一致";
+  if (status === "PENDING") return "待处理";
+  return status;
+}
+
 export function ReviewPage() {
   const [form] = Form.useForm();
   const session = useAuthStore((state) => state.session);
   const reviewerId = session?.id ?? null;
-  const [claimCount, setClaimCount] = useState(5);
   const [activeTaskId, setActiveTaskId] = useState<number | null>(null);
+  const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
   const { data: taskData, isLoading } = useReviewTasks(reviewerId, "IN_PROGRESS");
   const { data: poolSummary } = useAnnotationPoolSummary();
   const { data: competencies } = useCompetencies();
@@ -90,6 +109,7 @@ export function ReviewPage() {
     [activeTaskId, taskData?.items],
   );
   const submitMutation = useSubmitReviewTask(activeTask?.id ?? null);
+  const questionDetailQuery = useQuestionDetail(detailDrawerOpen ? (activeTask?.question_id ?? null) : null);
   const activeEduStage = useMemo(() => resolveEduStage(activeTask), [activeTask]);
   const visibleCompetencies = useMemo(
     () => filterCompetenciesByStage(competencies, activeEduStage),
@@ -143,9 +163,13 @@ export function ReviewPage() {
       message.error("请先登录");
       return;
     }
+    if (pendingReviewCount <= 0) {
+      message.info("当前没有待复核题。");
+      return;
+    }
     const result = await claimMutation.mutateAsync({
       reviewer_user_id: reviewerId,
-      count: claimCount,
+      count: pendingReviewCount,
     });
     message.success(`已领取 ${result.claimed_count} 道复核题`);
   };
@@ -174,28 +198,21 @@ export function ReviewPage() {
         <Card
           title="我的复核任务"
           extra={
-            <Space>
-              <InputNumber
-                min={1}
-                max={50}
-                value={claimCount}
-                onChange={(value: number | null) => setClaimCount(Number(value) || 1)}
-              />
-              <Button
-                icon={<InboxOutlined />}
-                loading={claimMutation.isPending}
-                onClick={handleClaim}
-              >
-                领取复核题
-              </Button>
-            </Space>
+            <Button
+              icon={<InboxOutlined />}
+              loading={claimMutation.isPending}
+              onClick={handleClaim}
+              disabled={pendingReviewCount <= 0}
+            >
+              一键领取全部复核题
+            </Button>
           }
         >
           <Typography.Text type="secondary">
-            当前待复核池还有 {pendingReviewCount} 道争议题，可自由选择本次领取数量。
+            当前{annotationStatusLabelMap.REVIEW_PENDING}池还有 {pendingReviewCount} 道题。当前仅有 1 位复核员，点击按钮会一次全部领取。
           </Typography.Text>
           {!isLoading && !taskData?.items.length ? (
-            <Empty description="暂无已领取复核任务，可从待复核池领取" />
+            <Empty description="暂无已领取复核任务，可从待复核池一键领取" />
           ) : (
             <List
               loading={isLoading}
@@ -228,7 +245,7 @@ export function ReviewPage() {
 
       <Col xs={24} xl={17}>
         <Space direction="vertical" size={16} style={{ width: "100%" }}>
-          <Card title="争议题检查">
+          <Card title="待复核题检查">
             {activeTask ? (
               <Space direction="vertical" size={12} style={{ width: "100%" }}>
                 <Space wrap>
@@ -237,7 +254,7 @@ export function ReviewPage() {
                   {activeTask.question.grade ? <Tag>{activeTask.question.grade.grade_name}</Tag> : null}
                   <Tag color="red">一致率 {activeTask.aggregate.agreement_score ?? "-"}</Tag>
                   <Tag color={activeTask.consensus.consensus_status === "DISPUTED" ? "error" : "processing"}>
-                    {activeTask.consensus.consensus_status}
+                    {getConsensusStatusLabel(activeTask.consensus.consensus_status)}
                   </Tag>
                 </Space>
                 <Typography.Text type="secondary">
@@ -250,6 +267,7 @@ export function ReviewPage() {
                   showIcon
                   message="复核员只需要处理存在争议的素养维度；已达成一致的维度系统已自动锁定，不需要重复复核。"
                 />
+                <Button onClick={() => setDetailDrawerOpen(true)}>查看题目详情</Button>
                 <QuestionRichText
                   html={activeTask.question.content?.stem_html}
                   text={activeTask.question.content?.stem_text}
@@ -257,7 +275,7 @@ export function ReviewPage() {
                 />
               </Space>
             ) : (
-              <Empty description="请选择或领取一条待复核任务" />
+              <Empty description="请选择或领取一条待复核题" />
             )}
           </Card>
 
@@ -268,7 +286,9 @@ export function ReviewPage() {
                   <Col xs={24} lg={8} key={annotation.annotation_id}>
                     <Card size="small" title={annotation.user_name}>
                       <Space direction="vertical" size={8}>
-                        <Tag>置信度 {annotation.confidence_level ?? "-"}</Tag>
+                        <Tag color={confidenceLevelMeta(annotation.confidence_level).color}>
+                          信心等级 {confidenceLevelMeta(annotation.confidence_level).label}
+                        </Tag>
                         {annotation.competencies.map((item) => (
                           <Tag key={item.competency_id} color={item.level_value > 0 ? "blue" : "default"}>
                             {item.competency_name}: L{item.level_value}
@@ -283,7 +303,7 @@ export function ReviewPage() {
           ) : null}
 
           {activeTask ? (
-            <Card title="争议素养投票分布">
+            <Card title="待复核素养投票分布">
               <Space direction="vertical" size={12} style={{ width: "100%" }}>
                 {activeTask.consensus.dimensions
                   .filter(
@@ -295,7 +315,7 @@ export function ReviewPage() {
                     <div key={dimension.dimension_key}>
                       <Space wrap>
                         <Typography.Text strong>{dimension.dimension_label}</Typography.Text>
-                        <Tag color="red">三人意见不一致</Tag>
+                        <Tag color="red">标注意见不一致</Tag>
                       </Space>
                       <Typography.Paragraph type="secondary" style={{ margin: "6px 0 0" }}>
                         {dimension.vote_summary
@@ -321,7 +341,7 @@ export function ReviewPage() {
                         {log.actor_name ?? "系统"}
                       </Tag>
                       <Typography.Text strong>{log.action_label}</Typography.Text>
-                      <Typography.Text type="secondary">{log.created_at.replace("T", " ").slice(0, 19)}</Typography.Text>
+                      <Typography.Text type="secondary">{formatBackendDateTime(log.created_at)}</Typography.Text>
                     </Space>
                     {log.comment ? (
                       <Typography.Paragraph type="secondary" style={{ margin: "6px 0 0" }}>
@@ -336,7 +356,7 @@ export function ReviewPage() {
 
           <Card title="提交复核结论">
             {!activeTask ? (
-              <Alert type="info" showIcon message="复核员领取争议题后，可以检查三人标注并给出最终结论。" />
+              <Alert type="info" showIcon message="复核员领取待复核题后，可以检查已有标注结果并给出最终结论。" />
             ) : (
               <Form form={form} layout="vertical" onFinish={handleSubmit}>
                 {lockedCompetencies.length ? (
@@ -392,6 +412,21 @@ export function ReviewPage() {
           </Card>
         </Space>
       </Col>
+      <Drawer
+        title={activeTask ? `题目 #${activeTask.question_id}` : "题目详情"}
+        width={920}
+        open={detailDrawerOpen}
+        onClose={() => setDetailDrawerOpen(false)}
+        destroyOnClose={false}
+      >
+        {questionDetailQuery.isLoading ? (
+          <Result icon={<Spin size="large" />} title="正在加载题目详情" />
+        ) : questionDetailQuery.data ? (
+          <QuestionDetailSections detail={questionDetailQuery.data} />
+        ) : (
+          <Empty description="未找到题目详情" />
+        )}
+      </Drawer>
     </Row>
   );
 }

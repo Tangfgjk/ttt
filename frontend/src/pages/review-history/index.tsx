@@ -18,8 +18,10 @@ import {
 import dayjs from "dayjs";
 import { type ChangeEvent, useMemo, useState } from "react";
 
+import { formatBackendDateTime, parseBackendDateTime } from "@/app/date-time";
 import { useAuthStore } from "@/app/store/auth-store";
 import { QuestionRichText } from "@/components/question-rich-text";
+import { getAnnotationStatusColor, getAnnotationStatusLabel } from "@/constants/annotation-status";
 import { useReviewTasks } from "@/modules/annotations/hooks";
 import type { ReviewTask } from "@/types/annotations";
 
@@ -51,7 +53,8 @@ export function ReviewHistoryPage() {
       if (timeFilter !== "all") {
         const days = timeFilter === "7d" ? 7 : 30;
         const reviewedAt = item.reviewed_at ?? item.created_at;
-        if (dayjs(reviewedAt).isBefore(dayjs().subtract(days, "day"))) {
+        const normalizedReviewedAt = parseBackendDateTime(reviewedAt);
+        if (normalizedReviewedAt && dayjs(normalizedReviewedAt).isBefore(dayjs().subtract(days, "day"))) {
           return false;
         }
       }
@@ -82,16 +85,15 @@ export function ReviewHistoryPage() {
     {
       title: "最终状态",
       render: (_: unknown, record: ReviewTask) => (
-        <Tag color={record.question.annotation_status === "COMPLETED" ? "green" : "default"}>
-          {record.question.annotation_status}
+        <Tag color={getAnnotationStatusColor(record.question.annotation_status)}>
+          {getAnnotationStatusLabel(record.question.annotation_status)}
         </Tag>
       ),
       width: 140,
     },
     {
       title: "复核完成时间",
-      render: (_: unknown, record: ReviewTask) =>
-        record.reviewed_at?.replace("T", " ").slice(0, 19) ?? "-",
+      render: (_: unknown, record: ReviewTask) => formatBackendDateTime(record.reviewed_at),
       width: 180,
     },
     {
@@ -113,7 +115,7 @@ export function ReviewHistoryPage() {
           已复核题目
         </Typography.Title>
         <Typography.Text type="secondary">
-          查看自己已经完成复核的题目、当时参考的三人标注结果，以及最终给出的定稿结论。
+          查看自己已经完成复核的题目、当时参考的标注结果，以及最终给出的定稿结论。
         </Typography.Text>
       </Card>
 
@@ -187,8 +189,16 @@ function ReviewHistoryDetail({ item }: { item: ReviewTask }) {
           { key: "question", label: "题目 ID", children: item.question_id },
           { key: "subject", label: "学科", children: item.question.subject.name },
           { key: "grade", label: "年级", children: item.question.grade?.grade_name ?? "-" },
-          { key: "status", label: "最终状态", children: <Tag color="green">{item.question.annotation_status}</Tag> },
-          { key: "time", label: "完成时间", children: item.reviewed_at?.replace("T", " ").slice(0, 19) ?? "-" },
+          {
+            key: "status",
+            label: "最终状态",
+            children: (
+              <Tag color={getAnnotationStatusColor(item.question.annotation_status)}>
+                {getAnnotationStatusLabel(item.question.annotation_status)}
+              </Tag>
+            ),
+          },
+          { key: "time", label: "完成时间", children: formatBackendDateTime(item.reviewed_at) },
         ]}
       />
 
@@ -200,7 +210,7 @@ function ReviewHistoryDetail({ item }: { item: ReviewTask }) {
         />
       </Card>
 
-      <Card size="small" title="复核前的三人标注">
+      <Card size="small" title="复核前的标注结果">
         <Space direction="vertical" size={12} style={{ width: "100%" }}>
           {item.annotations.map((annotation) => (
             <div key={annotation.annotation_id}>
@@ -245,7 +255,7 @@ function ReviewHistoryDetail({ item }: { item: ReviewTask }) {
                 </Tag>
                 <Typography.Text strong>{log.action_label}</Typography.Text>
                 <Typography.Text type="secondary">
-                  {log.created_at.replace("T", " ").slice(0, 19)}
+                  {formatBackendDateTime(log.created_at)}
                 </Typography.Text>
               </Space>
               {log.comment ? (

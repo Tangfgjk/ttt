@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -19,6 +21,10 @@ class AuthRepository:
         )
         return self.db.scalar(stmt)
 
+    def get_user_by_username(self, username: str) -> User | None:
+        stmt = select(User).options(selectinload(User.role)).where(User.username == username).limit(1)
+        return self.db.scalar(stmt)
+
     def count_users(self) -> int:
         stmt = select(func.count()).select_from(User)
         return self.db.scalar(stmt) or 0
@@ -34,5 +40,10 @@ class AuthRepository:
 
     def save_user(self, user: User) -> User:
         self.db.add(user)
+        self.db.flush()
+        return user
+
+    def touch_last_login(self, user: User) -> User:
+        user.last_login_at = datetime.utcnow()
         self.db.flush()
         return user

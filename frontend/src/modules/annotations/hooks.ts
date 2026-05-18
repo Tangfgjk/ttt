@@ -4,6 +4,7 @@ import {
   approveAdminQuestionReview,
   claimReviewTasks,
   claimAnnotationTasks,
+  getAnnotationPolicy,
   getAnnotatorHistory,
   getAdminQuestionReview,
   getSelectionBatches,
@@ -14,14 +15,17 @@ import {
   getWorkspaceSummary,
   overrideAdminQuestionReview,
   rejectAdminQuestionReview,
+  reviseAnnotationTask,
   resetAnnotationPools,
   rollbackSelectionBatch,
   selectQuestionsForAnnotation,
   submitAnnotationTask,
   submitReviewTask,
+  updateAnnotationPolicy,
 } from "@/services/annotations";
 import type {
   AdminAggregateOverrideRequest,
+  AnnotationPolicyUpdateRequest,
   AdminReviewDecisionRequest,
   AdminSelectionRequest,
   AdminSelectionResponse,
@@ -38,6 +42,14 @@ export function useAnnotationPoolSummary() {
   return useQuery({
     queryKey: ["annotations", "pools", "summary"],
     queryFn: getAnnotationPoolSummary,
+    refetchInterval: 3000,
+  });
+}
+
+export function useAnnotationPolicy() {
+  return useQuery({
+    queryKey: ["annotations", "admin", "policy"],
+    queryFn: getAnnotationPolicy,
     refetchInterval: 3000,
   });
 }
@@ -85,6 +97,17 @@ export function useResetAnnotationPools() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (payload: AdminPoolResetRequest) => resetAnnotationPools(payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["annotations"] });
+      queryClient.invalidateQueries({ queryKey: ["questions"] });
+    },
+  });
+}
+
+export function useUpdateAnnotationPolicy() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: AnnotationPolicyUpdateRequest) => updateAnnotationPolicy(payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["annotations"] });
       queryClient.invalidateQueries({ queryKey: ["questions"] });
@@ -160,14 +183,28 @@ export function useAnnotationTasks(userId: number | null, taskStatus?: string) {
   });
 }
 
-export function useAnnotatorHistory(annotatorUserId: number | null) {
+export function useAnnotatorHistory(
+  annotatorUserId: number | null,
+  params?: {
+    page?: number;
+    page_size?: number;
+    keyword?: string;
+    review_state?: "NOT_REQUIRED" | "PENDING" | "COMPLETED";
+    adoption_status?: "PENDING" | "PASSED" | "OVERRIDDEN";
+    time_range?: "7d" | "30d";
+  },
+) {
   return useQuery({
-    queryKey: ["annotations", "history", annotatorUserId],
+    queryKey: ["annotations", "history", annotatorUserId, params],
     queryFn: () =>
       getAnnotatorHistory({
         annotator_user_id: annotatorUserId as number,
-        page: 1,
-        page_size: 50,
+        page: params?.page ?? 1,
+        page_size: params?.page_size ?? 20,
+        keyword: params?.keyword,
+        review_state: params?.review_state,
+        adoption_status: params?.adoption_status,
+        time_range: params?.time_range,
       }),
     enabled: annotatorUserId !== null,
     refetchInterval: 3000,
@@ -209,6 +246,18 @@ export function useReviewTasks(reviewerUserId: number | null, reviewStatus?: str
       }),
     enabled: reviewerUserId !== null,
     refetchInterval: 3000,
+  });
+}
+
+export function useReviseAnnotationTask(taskId: number | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: SubmitAnnotationRequest) =>
+      reviseAnnotationTask(taskId as number, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["annotations"] });
+      queryClient.invalidateQueries({ queryKey: ["questions"] });
+    },
   });
 }
 

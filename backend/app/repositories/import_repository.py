@@ -155,6 +155,7 @@ class ImportRepository:
         batch_id: int,
         *,
         parse_status: str | None = None,
+        normalized_question_id: int | None = None,
         offset: int = 0,
         limit: int = 200,
     ) -> list[SourceQuestionRecord]:
@@ -167,6 +168,8 @@ class ImportRepository:
         )
         if parse_status:
             stmt = stmt.where(SourceQuestionRecord.parse_status == parse_status)
+        if normalized_question_id is not None:
+            stmt = stmt.where(SourceQuestionRecord.normalized_question_id == normalized_question_id)
         stmt = stmt.order_by(SourceQuestionRecord.id.asc()).offset(offset).limit(limit)
         return list(self.db.scalars(stmt))
 
@@ -175,12 +178,15 @@ class ImportRepository:
         batch_id: int,
         *,
         parse_status: str | None = None,
+        normalized_question_id: int | None = None,
     ) -> int:
         stmt = select(func.count(SourceQuestionRecord.id)).where(
             SourceQuestionRecord.import_batch_id == batch_id
         )
         if parse_status:
             stmt = stmt.where(SourceQuestionRecord.parse_status == parse_status)
+        if normalized_question_id is not None:
+            stmt = stmt.where(SourceQuestionRecord.normalized_question_id == normalized_question_id)
         return self.db.scalar(stmt) or 0
 
     def count_duplicate_candidates_by_source_record(self, batch_id: int) -> dict[int, int]:

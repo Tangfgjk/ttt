@@ -25,6 +25,7 @@ export async function getImportBatchRecords(
   batchId: number,
   params: {
     parse_status?: string;
+    normalized_question_id?: number;
     page?: number;
     page_size?: number;
   } = {},

@@ -6,23 +6,38 @@ import { AnnotatePage } from "@/pages/annotate";
 import { AnnotationHistoryPage } from "@/pages/annotation-history";
 import { AnnotatorTrainingPage } from "@/pages/annotator-training";
 import { DedupReviewPage } from "@/pages/dedup-review";
+import { ForgotPasswordPage } from "@/pages/forgot-password";
 import { HomePage } from "@/pages/home";
 import { ImportContentHashMatchesPage } from "@/pages/import-content-hash-matches";
 import { ImportsPage } from "@/pages/imports";
 import { LabelInsightsPage } from "@/pages/label-insights";
 import { LoginPage } from "@/pages/login";
 import { QuestionsPage } from "@/pages/questions";
+import { RegisterPage } from "@/pages/register";
 import { ReviewPage } from "@/pages/review";
 import { ReviewHistoryPage } from "@/pages/review-history";
 import { TrainingPage } from "@/pages/training";
 import { VisualizationPage } from "@/pages/visualization";
 import { WorkspacePage } from "@/pages/workspace";
-import { RequireAuth, RequireRole, RequireTraining, RoleLanding } from "@/router/guards";
+import { PublicOnly, RequireAuth, RequireRole, RequireTraining, RoleLanding } from "@/router/guards";
 
 export const router = createBrowserRouter([
   {
-    path: "/login",
-    element: <LoginPage />,
+    element: <PublicOnly />,
+    children: [
+      {
+        path: "/login",
+        element: <LoginPage />,
+      },
+      {
+        path: "/register",
+        element: <RegisterPage />,
+      },
+      {
+        path: "/forgot-password",
+        element: <ForgotPasswordPage />,
+      },
+    ],
   },
   {
     element: <RequireAuth />,

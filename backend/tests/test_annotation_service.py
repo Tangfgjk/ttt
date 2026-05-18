@@ -9,6 +9,7 @@ from app.models.question import Question, QuestionContent
 from app.schemas.annotations import (
     AdminReviewDecisionRequest,
     AdminSelectionRequest,
+    AnnotationPolicyUpdateRequest,
     ClaimAnnotationRequest,
     ClaimReviewTaskRequest,
     SubmitAnnotationRequest,
@@ -248,6 +249,113 @@ def test_three_annotators_with_majority_consensus_complete_question() -> None:
     assert aggregate is not None
     assert aggregate.is_disputed is False
     assert any(log.action_code == "AUTO_CONSENSUS_COMPLETED" for log in logs)
+
+
+def test_single_annotator_policy_completes_question_without_review() -> None:
+    db = _build_session()
+    annotator_role = _seed_role(db, "annotator", "标注员")
+    admin_role = _seed_role(db, "admin", "管理员")
+    annotator = _seed_user(db, role=annotator_role, username="annotator_solo")
+    admin = _seed_user(db, role=admin_role, username="admin_solo", training_scope="none")
+    question, competencies, tasks = _seed_manual_tasks(db, annotators=[annotator])
+    question.required_annotations = 1
+    db.commit()
+    service = AnnotationService(db)
+
+    service.update_annotation_policy(
+        AnnotationPolicyUpdateRequest(admin_user_id=admin.id, annotator_count=1)
+    )
+    result = service.submit_annotation(
+        tasks[0].id,
+        SubmitAnnotationRequest(
+            annotator_user_id=annotator.id,
+            competencies=[
+                {"competency_id": competencies[0].id, "level_value": 2},
+                {"competency_id": competencies[1].id, "level_value": 1},
+            ],
+        ),
+    )
+
+    db.refresh(question)
+    review_task = db.scalar(select(ReviewTask).where(ReviewTask.question_id == question.id))
+
+    assert result.is_disputed is False
+    assert question.annotation_status == "COMPLETED"
+    assert review_task is None
+
+
+def test_update_annotation_policy_defers_idle_question_backfill() -> None:
+    db = _build_session()
+    annotator_role = _seed_role(db, "annotator", "标注员")
+    admin_role = _seed_role(db, "admin", "管理员")
+    annotator = _seed_user(db, role=annotator_role, username="annotator_idle")
+    admin = _seed_user(db, role=admin_role, username="admin_idle", training_scope="none")
+    question, _competencies, _tasks = _seed_manual_tasks(db, annotators=[annotator])
+    question.annotation_status = "WAITING"
+    question.annotation_count = 0
+    question.required_annotations = 3
+    db.commit()
+    service = AnnotationService(db)
+
+    result = service.update_annotation_policy(
+        AnnotationPolicyUpdateRequest(admin_user_id=admin.id, annotator_count=1)
+    )
+
+    db.refresh(question)
+    assert result.affected_question_count == 1
+    assert result.sync_status.status == "running"
+    assert question.required_annotations == 3
+
+    service._apply_annotation_policy_to_idle_questions(1)
+    service.policy_store.set_sync_status(
+        status="completed",
+        target_annotator_count=1,
+        affected_question_count=1,
+        updated_question_count=1,
+        started_at=service.policy_store.timestamp_now(),
+        finished_at=service.policy_store.timestamp_now(),
+        error_message=None,
+    )
+    db.commit()
+    db.refresh(question)
+    assert question.required_annotations == 1
+    assert service.get_annotation_policy().sync_status.status == "completed"
+
+
+def test_two_annotator_policy_sends_disagreement_to_review() -> None:
+    db = _build_session()
+    annotator_role = _seed_role(db, "annotator", "标注员")
+    admin_role = _seed_role(db, "admin", "管理员")
+    annotators = [
+        _seed_user(db, role=annotator_role, username="annotator_pair_1"),
+        _seed_user(db, role=annotator_role, username="annotator_pair_2"),
+    ]
+    admin = _seed_user(db, role=admin_role, username="admin_pair", training_scope="none")
+    question, competencies, tasks = _seed_manual_tasks(db, annotators=annotators)
+    question.required_annotations = 2
+    db.commit()
+    service = AnnotationService(db)
+
+    service.update_annotation_policy(
+        AnnotationPolicyUpdateRequest(admin_user_id=admin.id, annotator_count=2)
+    )
+    for task, level_value in zip(tasks, [1, 2]):
+        service.submit_annotation(
+            task.id,
+            SubmitAnnotationRequest(
+                annotator_user_id=task.assignee_id,
+                competencies=[
+                    {"competency_id": competencies[0].id, "level_value": level_value},
+                    {"competency_id": competencies[1].id, "level_value": 1},
+                ],
+            ),
+        )
+
+    db.refresh(question)
+    review_task = db.scalar(select(ReviewTask).where(ReviewTask.question_id == question.id))
+
+    assert question.annotation_status == "REVIEW_PENDING"
+    assert review_task is not None
 
 
 def test_admin_can_view_disputed_question_and_reject_for_additional_annotations() -> None:

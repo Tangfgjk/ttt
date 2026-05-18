@@ -15,57 +15,36 @@ import {
   Tag,
   Typography,
 } from "antd";
-import dayjs from "dayjs";
 import { type ChangeEvent, useMemo, useState } from "react";
 
+import { formatBackendDateTime } from "@/app/date-time";
 import { useAuthStore } from "@/app/store/auth-store";
 import { QuestionRichText } from "@/components/question-rich-text";
+import { getAnnotationStatusColor, getAnnotationStatusLabel } from "@/constants/annotation-status";
 import { useAnnotatorHistory } from "@/modules/annotations/hooks";
 import type { AnnotatorHistoryItem } from "@/types/annotations";
-
-const questionStatusColorMap: Record<string, string> = {
-  WAITING: "blue",
-  IN_PROGRESS: "purple",
-  REVIEW_PENDING: "orange",
-  COMPLETED: "green",
-};
 
 export function AnnotationHistoryPage() {
   const session = useAuthStore((state) => state.session);
   const annotatorId = session?.id ?? null;
-  const historyQuery = useAnnotatorHistory(annotatorId);
   const [activeAnnotationId, setActiveAnnotationId] = useState<number | null>(null);
   const [keyword, setKeyword] = useState("");
   const [reviewFilter, setReviewFilter] = useState<"all" | AnnotatorHistoryItem["review_state"]>("all");
   const [adoptionFilter, setAdoptionFilter] = useState<"all" | AnnotatorHistoryItem["adoption_status"]>("all");
   const [timeFilter, setTimeFilter] = useState<"all" | "7d" | "30d">("all");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+
+  const historyQuery = useAnnotatorHistory(annotatorId, {
+    page,
+    page_size: pageSize,
+    keyword: keyword.trim() || undefined,
+    review_state: reviewFilter === "all" ? undefined : reviewFilter,
+    adoption_status: adoptionFilter === "all" ? undefined : adoptionFilter,
+    time_range: timeFilter === "all" ? undefined : timeFilter,
+  });
 
   const items = historyQuery.data?.items ?? [];
-  const filteredItems = useMemo(() => {
-    const normalizedKeyword = keyword.trim().toLowerCase();
-    return items.filter((item) => {
-      if (reviewFilter !== "all" && item.review_state !== reviewFilter) {
-        return false;
-      }
-      if (adoptionFilter !== "all" && item.adoption_status !== adoptionFilter) {
-        return false;
-      }
-      if (timeFilter !== "all") {
-        const days = timeFilter === "7d" ? 7 : 30;
-        if (dayjs(item.submitted_at).isBefore(dayjs().subtract(days, "day"))) {
-          return false;
-        }
-      }
-      if (!normalizedKeyword) {
-        return true;
-      }
-      return (
-        String(item.question_id).includes(normalizedKeyword) ||
-        item.question.subject.name.toLowerCase().includes(normalizedKeyword) ||
-        (item.question.content?.stem_text ?? "").toLowerCase().includes(normalizedKeyword)
-      );
-    });
-  }, [adoptionFilter, items, keyword, reviewFilter, timeFilter]);
   const activeItem = useMemo(
     () => items.find((item) => item.annotation_id === activeAnnotationId) ?? null,
     [activeAnnotationId, items],
@@ -85,8 +64,8 @@ export function AnnotationHistoryPage() {
     {
       title: "当前状态",
       render: (_: unknown, record: AnnotatorHistoryItem) => (
-        <Tag color={questionStatusColorMap[record.question_status] ?? "default"}>
-          {record.question_status}
+        <Tag color={getAnnotationStatusColor(record.question_status)}>
+          {getAnnotationStatusLabel(record.question_status)}
         </Tag>
       ),
       width: 140,
@@ -103,8 +82,7 @@ export function AnnotationHistoryPage() {
     },
     {
       title: "提交时间",
-      render: (_: unknown, record: AnnotatorHistoryItem) =>
-        record.submitted_at.replace("T", " ").slice(0, 19),
+      render: (_: unknown, record: AnnotatorHistoryItem) => formatBackendDateTime(record.submitted_at),
       width: 180,
     },
     {
@@ -137,12 +115,18 @@ export function AnnotationHistoryPage() {
               allowClear
               placeholder="搜索题目 ID、学科或题干关键词"
               value={keyword}
-              onChange={(event: ChangeEvent<HTMLInputElement>) => setKeyword(event.target.value)}
+              onChange={(event: ChangeEvent<HTMLInputElement>) => {
+                setKeyword(event.target.value);
+                setPage(1);
+              }}
               style={{ width: 260 }}
             />
             <Select
               value={reviewFilter}
-              onChange={setReviewFilter}
+              onChange={(value: "all" | AnnotatorHistoryItem["review_state"]) => {
+                setReviewFilter(value);
+                setPage(1);
+              }}
               style={{ width: 150 }}
               options={[
                 { value: "all", label: "全部复核状态" },
@@ -153,7 +137,10 @@ export function AnnotationHistoryPage() {
             />
             <Select
               value={adoptionFilter}
-              onChange={setAdoptionFilter}
+              onChange={(value: "all" | AnnotatorHistoryItem["adoption_status"]) => {
+                setAdoptionFilter(value);
+                setPage(1);
+              }}
               style={{ width: 150 }}
               options={[
                 { value: "all", label: "全部采纳结果" },
@@ -164,7 +151,10 @@ export function AnnotationHistoryPage() {
             />
             <Segmented
               value={timeFilter}
-              onChange={(value: string | number) => setTimeFilter(value as "all" | "7d" | "30d")}
+              onChange={(value: string | number) => {
+                setTimeFilter(value as "all" | "7d" | "30d");
+                setPage(1);
+              }}
               options={[
                 { value: "all", label: "全部时间" },
                 { value: "7d", label: "最近 7 天" },
@@ -173,16 +163,26 @@ export function AnnotationHistoryPage() {
             />
           </Space>
           <Typography.Text type="secondary">
-            当前筛选结果 {filteredItems.length} 条，常用场景可直接看“已复核”“已调整”“最近 7 天”。
+            当前筛选结果 {historyQuery.data?.meta.total ?? 0} 条，默认每页 20 条，可翻页查看全部记录。
           </Typography.Text>
         {historyQuery.isLoading ? (
           <Result icon={<Spin size="large" />} title="正在加载我的标注记录" />
-        ) : filteredItems.length ? (
+        ) : items.length ? (
           <Table<AnnotatorHistoryItem>
             rowKey="annotation_id"
-            dataSource={filteredItems}
+            dataSource={items}
             columns={columns}
-            pagination={false}
+            pagination={{
+              current: page,
+              pageSize,
+              total: historyQuery.data?.meta.total ?? 0,
+              showSizeChanger: true,
+              pageSizeOptions: [20, 50, 100],
+              onChange: (nextPage: number, nextPageSize: number) => {
+                setPage(nextPage);
+                setPageSize(nextPageSize);
+              },
+            }}
             scroll={{ x: 980 }}
           />
         ) : (
@@ -215,7 +215,15 @@ function AnnotationHistoryDetail({ item }: { item: AnnotatorHistoryItem }) {
           { key: "question", label: "题目 ID", children: item.question_id },
           { key: "subject", label: "学科", children: item.question.subject.name },
           { key: "grade", label: "年级", children: item.question.grade?.grade_name ?? "-" },
-          { key: "status", label: "当前状态", children: <Tag color={questionStatusColorMap[item.question_status] ?? "default"}>{item.question_status}</Tag> },
+          {
+            key: "status",
+            label: "当前状态",
+            children: (
+              <Tag color={getAnnotationStatusColor(item.question_status)}>
+                {getAnnotationStatusLabel(item.question_status)}
+              </Tag>
+            ),
+          },
           { key: "review", label: "复核状态", children: reviewStateTag(item.review_state) },
           { key: "adoption", label: "最终采纳", children: adoptionStatusTag(item.adoption_status) },
         ]}
@@ -234,7 +242,7 @@ function AnnotationHistoryDetail({ item }: { item: AnnotatorHistoryItem }) {
           <Space wrap>
             <Tag color="blue">置信度 {item.annotation.confidence_level ?? "-"}</Tag>
             <Typography.Text type="secondary">
-              提交于 {item.submitted_at.replace("T", " ").slice(0, 19)}
+              提交于 {formatBackendDateTime(item.submitted_at)}
             </Typography.Text>
           </Space>
           <Space size={[8, 8]} wrap>
@@ -277,7 +285,7 @@ function AnnotationHistoryDetail({ item }: { item: AnnotatorHistoryItem }) {
                 </Tag>
                 <Typography.Text strong>{log.action_label}</Typography.Text>
                 <Typography.Text type="secondary">
-                  {log.created_at.replace("T", " ").slice(0, 19)}
+                  {formatBackendDateTime(log.created_at)}
                 </Typography.Text>
               </Space>
               {log.comment ? (

@@ -24,6 +24,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { usePageHashScroll } from "@/app/use-page-hash-scroll";
 import { useAuthStore } from "@/app/store/auth-store";
+import { QuestionDetailSections } from "@/components/question-detail-sections";
 import {
   useAdminQuestionReview,
   useOverrideAdminQuestionReview,
@@ -32,6 +33,7 @@ import {
   useCognitiveLevels,
   useCompetencies,
   useGrades,
+  useQuestionDetail,
   useQuestionTypes,
   useSubjects,
 } from "@/modules/question-bank/hooks";
@@ -482,6 +484,7 @@ export function LabelInsightsPage() {
     placeholderData: (previousData) => previousData,
   });
 
+  const questionDetailQuery = useQuestionDetail(selectedQuestion?.question_id ?? null);
   const reviewQuery = useAdminQuestionReview(selectedQuestion?.question_id ?? null, adminUserId);
   const overrideMutation = useOverrideAdminQuestionReview(selectedQuestion?.question_id ?? null);
 
@@ -1061,6 +1064,14 @@ export function LabelInsightsPage() {
       >
         {!selectedQuestion ? null : (
           <Space direction="vertical" size={16} style={{ width: "100%" }}>
+            <Card size="small" title="题目详情" loading={questionDetailQuery.isLoading}>
+              {questionDetailQuery.data ? (
+                <QuestionDetailSections detail={questionDetailQuery.data} />
+              ) : (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="未找到题目详情" />
+              )}
+            </Card>
+
             <Card size="small" title="题目摘要">
               <Descriptions column={2} size="small">
                 <Descriptions.Item label="题目 ID">#{selectedQuestion.question_id}</Descriptions.Item>
@@ -1080,7 +1091,7 @@ export function LabelInsightsPage() {
               {effectiveResult ? (
                 <Space direction="vertical" size={10} style={{ width: "100%" }}>
                   <Typography.Text>
-                    认知层级 ID：{effectiveResult.final_cognitive_level_id ?? "-"}
+                    认知层级 ID: {effectiveResult.final_cognitive_level_id ?? "-"}
                   </Typography.Text>
                   <Space size={[8, 8]} wrap>
                     {effectiveResult.competencies.filter((item) => item.level_value > 0).map((item) => (

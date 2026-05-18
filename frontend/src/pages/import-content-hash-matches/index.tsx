@@ -18,6 +18,7 @@ import {
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
+import { getImportBatchStatusColor, getImportBatchStatusLabel } from "@/constants/import-status";
 import { QuestionRichText } from "@/components/question-rich-text";
 import { useImportBatchDetail, useImportBatchRecords } from "@/modules/import-center/hooks";
 import { useQuestionDetail } from "@/modules/question-bank/hooks";
@@ -112,7 +113,7 @@ export function ImportContentHashMatchesPage() {
                 内容指纹命中明细
               </Typography.Title>
               <Typography.Paragraph type="secondary">
-                这里展示当前批次中被判定为 `MATCHED_BY_CONTENT_HASH` 的导入记录，以及它们最终命中的统一题目。
+                这里展示当前批次中被判定为“按内容指纹匹配”的导入记录，以及它们最终命中的统一题目。
               </Typography.Paragraph>
             </div>
             {batch ? (
@@ -123,7 +124,11 @@ export function ImportContentHashMatchesPage() {
                 items={[
                   { key: "batch_no", label: "批次号", children: batch.batch_no },
                   { key: "file_name", label: "文件标识", children: batch.file_name },
-                  { key: "status", label: "批次状态", children: <Tag color="cyan">{batch.import_status}</Tag> },
+                  {
+                    key: "status",
+                    label: "批次状态",
+                    children: <Tag color={getImportBatchStatusColor(batch.import_status)}>{getImportBatchStatusLabel(batch.import_status)}</Tag>,
+                  },
                   {
                     key: "matched",
                     label: "内容指纹命中数",

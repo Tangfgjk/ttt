@@ -6,11 +6,12 @@ export type UserRole = "admin" | "annotator" | "reviewer";
 export type UserSession = {
   id: number;
   username: string;
-  email: string;
+  email?: string | null;
   name: string;
   role: UserRole;
   isVerified: boolean;
   trainingScope: "none" | "junior" | "senior" | "both";
+  mustChangePassword?: boolean;
 };
 
 type AuthState = {

@@ -19,6 +19,34 @@ export type PoolSummaryResponse = {
   items: PoolSummaryItem[];
 };
 
+export type AnnotatorCount = 1 | 2 | 3;
+
+export type AnnotationPolicySyncStatus = {
+  status: "idle" | "running" | "completed" | "failed";
+  target_annotator_count: AnnotatorCount;
+  affected_question_count: number;
+  updated_question_count: number;
+  started_at?: string | null;
+  finished_at?: string | null;
+  error_message?: string | null;
+};
+
+export type AnnotationPolicySettings = {
+  annotator_count: AnnotatorCount;
+  review_required: boolean;
+  strategy_description: string;
+  sync_status: AnnotationPolicySyncStatus;
+};
+
+export type AnnotationPolicyUpdateRequest = {
+  admin_user_id: number;
+  annotator_count: AnnotatorCount;
+};
+
+export type AnnotationPolicyUpdateResponse = AnnotationPolicySettings & {
+  affected_question_count: number;
+};
+
 export type WorkspaceSummary = {
   user_id: number;
   role: string;
@@ -50,13 +78,14 @@ export type AdminSelectionResponse = {
   moved_count: number;
   candidate_count: number;
   question_ids: number[];
-   moved_question_ids: number[];
+  moved_question_ids: number[];
 };
 
 export type SelectionBatchSummary = {
   id: number;
   batch_no: string;
   algorithm_code: string;
+  source_run_no?: string | null;
   triggered_by_user_id?: number | null;
   created_at: string;
   requested_count: number;
@@ -65,7 +94,7 @@ export type SelectionBatchSummary = {
   pending_count: number;
   waiting_count: number;
   in_progress_count: number;
-   question_ids: number[];
+  question_ids: number[];
 };
 
 export type AdminPoolResetRequest = {

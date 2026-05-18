@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 import random
 from uuid import uuid4
 
 from fastapi import HTTPException, status
-from sqlalchemy import case, delete, func, select
+from sqlalchemy import String, case, delete, func, select, update
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.time_utils import local_day_start_utc_naive
+from app.db.session import SessionLocal
 from app.models.assessment import (
     Annotation,
     AnnotationCompetency,
@@ -23,15 +25,20 @@ from app.models.assessment import (
     QuestionLabelAggregate,
     RecommendationBatch,
     RecommendationItem,
+    ModelCoresetRun,
     ReviewTask,
 )
 from app.models.auth import User
-from app.models.dictionary import CognitiveLevel, Competency, Grade
+from app.models.dictionary import CognitiveLevel, Competency, Grade, Subject
 from app.models.question import Question, QuestionContent
 from app.schemas.annotations import (
     AdminAggregateOverrideRequest,
     AdminQuestionAnnotationOut,
     AdminQuestionReviewOut,
+    AnnotationPolicySettingsOut,
+    AnnotationPolicySyncStatusOut,
+    AnnotationPolicyUpdateRequest,
+    AnnotationPolicyUpdateResponse,
     AdminPoolResetRequest,
     AdminPoolResetResponse,
     AdminReviewDecisionRequest,
@@ -65,6 +72,10 @@ from app.schemas.annotations import (
     SubmitReviewTaskResponse,
     WorkspaceSummaryOut,
 )
+from app.services.annotation_policy import (
+    AnnotationPolicyStore,
+    describe_annotation_policy,
+)
 from app.services.coreset_selection import CoresetCandidate, CoresetSelector
 from app.services.training_service import training_scope_allows_stage
 
@@ -86,6 +97,7 @@ REVIEW_STATUS_COMPLETED = "COMPLETED"
 
 ACTION_LABELS = {
     "ANNOTATION_SUBMITTED": "标注员提交标注",
+    "ANNOTATION_RESUBMITTED": "标注员修改并重新提交",
     "AUTO_CONSENSUS_COMPLETED": "系统自动完成多数聚合",
     "AUTO_REVIEW_CREATED": "系统创建争议复核任务",
     "REVIEW_TASK_CLAIMED": "复核员领取复核任务",
@@ -129,6 +141,7 @@ class AnnotationService:
     def __init__(self, db: Session) -> None:
         self.db = db
         self.selector = CoresetSelector()
+        self.policy_store = AnnotationPolicyStore(db)
 
     def pool_summary(self) -> PoolSummaryResponse:
         rows = self.db.execute(
@@ -151,9 +164,76 @@ class AnnotationService:
             ]
         )
 
+    def get_annotation_policy(self) -> AnnotationPolicySettingsOut:
+        annotator_count = self.policy_store.get_annotator_count()
+        return self._build_annotation_policy_settings(annotator_count)
+
+    def update_annotation_policy(
+        self,
+        payload: AnnotationPolicyUpdateRequest,
+    ) -> AnnotationPolicyUpdateResponse:
+        self._require_admin(payload.admin_user_id)
+        annotator_count = int(payload.annotator_count)
+        self.policy_store.set_annotator_count(annotator_count)
+        affected_question_count = self._count_idle_questions_pending_policy_change(
+            annotator_count
+        )
+        self.policy_store.set_sync_status(
+            status="running" if affected_question_count > 0 else "completed",
+            target_annotator_count=annotator_count,
+            affected_question_count=affected_question_count,
+            updated_question_count=0 if affected_question_count > 0 else affected_question_count,
+            started_at=self.policy_store.timestamp_now() if affected_question_count > 0 else None,
+            finished_at=None if affected_question_count > 0 else self.policy_store.timestamp_now(),
+            error_message=None,
+        )
+        self.db.commit()
+        settings = self._build_annotation_policy_settings(annotator_count)
+        return AnnotationPolicyUpdateResponse(
+            **settings.model_dump(),
+            affected_question_count=affected_question_count,
+        )
+
+    @staticmethod
+    def apply_annotation_policy_to_idle_questions_async(annotator_count: int) -> None:
+        db = SessionLocal()
+        try:
+            service = AnnotationService(db)
+            if service.policy_store.get_annotator_count() != annotator_count:
+                db.rollback()
+                return
+            updated_question_count = service._apply_annotation_policy_to_idle_questions(annotator_count)
+            current_sync_status = service.policy_store.get_sync_status()
+            service.policy_store.set_sync_status(
+                status="completed",
+                target_annotator_count=annotator_count,
+                affected_question_count=current_sync_status["affected_question_count"],
+                updated_question_count=updated_question_count,
+                started_at=current_sync_status["started_at"],
+                finished_at=service.policy_store.timestamp_now(),
+                error_message=None,
+            )
+            db.commit()
+        except Exception as exc:
+            service = AnnotationService(db)
+            current_sync_status = service.policy_store.get_sync_status()
+            service.policy_store.set_sync_status(
+                status="failed",
+                target_annotator_count=annotator_count,
+                affected_question_count=current_sync_status["affected_question_count"],
+                updated_question_count=current_sync_status["updated_question_count"],
+                started_at=current_sync_status["started_at"],
+                finished_at=service.policy_store.timestamp_now(),
+                error_message=str(exc),
+            )
+            db.commit()
+            raise
+        finally:
+            db.close()
+
     def get_workspace_summary(self, user_id: int) -> WorkspaceSummaryOut:
         user = self._require_user(user_id)
-        start_of_day = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        start_of_day = local_day_start_utc_naive()
 
         if user.role.code == "annotator":
             pending_task_count = int(
@@ -287,6 +367,7 @@ class AnnotationService:
 
         moved_count = 0
         moved_question_ids: list[int] = []
+        annotator_count = self.policy_store.get_annotator_count()
         if selected_ids:
             questions = list(
                 self.db.scalars(
@@ -298,6 +379,7 @@ class AnnotationService:
             )
             for question in questions:
                 question.annotation_status = QUESTION_STATUS_WAITING
+                question.required_annotations = annotator_count
                 moved_count += 1
                 moved_question_ids.append(question.id)
 
@@ -425,7 +507,7 @@ class AnnotationService:
         if not questions:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="待标注池可领取题目不足 10 道，请先让管理员补充待标注池。",
+                detail="待标注池当前没有可领取题目，请调整领取数量或让管理员补充题目。",
             )
 
         tasks: list[AnnotationTask] = []
@@ -490,11 +572,18 @@ class AnnotationService:
         annotator_user_id: int,
         page: int,
         page_size: int,
+        keyword: str | None = None,
+        review_state: str | None = None,
+        adoption_status: str | None = None,
+        time_range: str | None = None,
     ) -> tuple[list[AnnotatorHistoryItemOut], int]:
         user = self._require_user(annotator_user_id)
         self._require_annotator(user)
         stmt = (
             select(Annotation)
+            .join(Question, Question.id == Annotation.question_id)
+            .join(Subject, Subject.id == Question.subject_id)
+            .outerjoin(QuestionContent, QuestionContent.question_id == Question.id)
             .options(
                 selectinload(Annotation.user),
                 selectinload(Annotation.task),
@@ -509,6 +598,40 @@ class AnnotationService:
             .where(Annotation.user_id == annotator_user_id)
             .where(Annotation.is_final.is_(True))
         )
+        if keyword:
+            normalized_keyword = keyword.strip()
+            if normalized_keyword:
+                stmt = stmt.where(
+                    (func.cast(Annotation.question_id, String).like(f"%{normalized_keyword}%"))
+                    | Subject.name.ilike(f"%{normalized_keyword}%")
+                    | QuestionContent.stem_text.ilike(f"%{normalized_keyword}%")
+                )
+        if review_state == "NOT_REQUIRED":
+            stmt = stmt.where(Question.annotation_status != QUESTION_STATUS_REVIEW_PENDING)
+        elif review_state == "PENDING":
+            stmt = stmt.where(Question.annotation_status == QUESTION_STATUS_REVIEW_PENDING)
+        elif review_state == "COMPLETED":
+            stmt = stmt.where(
+                select(ReviewTask.id)
+                .where(ReviewTask.question_id == Annotation.question_id)
+                .where(ReviewTask.review_status == REVIEW_STATUS_COMPLETED)
+                .exists()
+            )
+        if adoption_status == "PASSED":
+            stmt = stmt.where(Question.annotation_status == QUESTION_STATUS_COMPLETED)
+        elif adoption_status == "OVERRIDDEN":
+            stmt = stmt.where(
+                select(AnnotationReviewLog.id)
+                .where(AnnotationReviewLog.question_id == Annotation.question_id)
+                .where(AnnotationReviewLog.action_code == "ADMIN_OVERRIDE_FINAL_RESULT")
+                .exists()
+            )
+        elif adoption_status == "PENDING":
+            stmt = stmt.where(Question.annotation_status != QUESTION_STATUS_COMPLETED)
+        if time_range in {"7d", "30d"}:
+            stmt = stmt.where(
+                Annotation.created_at >= datetime.utcnow() - timedelta(days=7 if time_range == "7d" else 30)
+            )
         total = self.db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
         rows = list(
             self.db.scalars(
@@ -620,6 +743,99 @@ class AnnotationService:
             question_status=question.annotation_status,
             aggregate_id=aggregate_id,
             is_disputed=is_disputed,
+        )
+
+    def revise_annotation(
+        self,
+        task_id: int,
+        payload: SubmitAnnotationRequest,
+    ) -> SubmitAnnotationResponse:
+        user = self._require_user(payload.annotator_user_id)
+        self._require_annotator(user)
+        task = self.db.scalar(
+            select(AnnotationTask)
+            .options(selectinload(AnnotationTask.question).selectinload(Question.grade))
+            .where(AnnotationTask.id == task_id)
+            .with_for_update()
+        )
+        if task is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="标注任务不存在。")
+        if task.assignee_id != payload.annotator_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="不能修改他人的标注任务。",
+            )
+        if task.task_status != TASK_STATUS_SUBMITTED:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="该任务当前不可修改，请在已提交后再进行修改。",
+            )
+        if task.question.annotation_status not in {
+            QUESTION_STATUS_WAITING,
+            QUESTION_STATUS_IN_PROGRESS,
+        }:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="该题已进入聚合或复核流程，不能再修改。",
+            )
+
+        self._ensure_training_access_for_question(user, task.question)
+        self._validate_competencies(payload.competencies)
+
+        annotation = self.db.scalar(
+            select(Annotation)
+            .options(selectinload(Annotation.competencies))
+            .where(Annotation.task_id == task.id)
+            .where(Annotation.user_id == payload.annotator_user_id)
+            .where(Annotation.is_final.is_(True))
+            .with_for_update()
+        )
+        if annotation is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="未找到可修改的已提交标注。",
+            )
+
+        annotation.version_no += 1
+        annotation.cognitive_level_id = payload.cognitive_level_id
+        annotation.confidence_level = payload.confidence_level
+        annotation.time_spent_seconds = payload.time_spent_seconds
+        annotation.annotation_status = ANNOTATION_STATUS_SUBMITTED
+        annotation.competencies = [
+            AnnotationCompetency(
+                competency_id=item.competency_id,
+                level_value=item.level_value,
+            )
+            for item in payload.competencies
+        ]
+        task.submitted_at = datetime.utcnow()
+
+        self._append_review_log(
+            question_id=task.question_id,
+            actor_user=user,
+            action_code="ANNOTATION_RESUBMITTED",
+            detail_json={
+                "annotation_id": annotation.id,
+                "task_id": task.id,
+                "version_no": annotation.version_no,
+                "confidence_level": payload.confidence_level,
+            },
+        )
+
+        final_annotations = self._final_annotations(task.question_id)
+        task.question.annotation_count = len(final_annotations)
+
+        self.db.commit()
+        self.db.refresh(annotation)
+
+        return SubmitAnnotationResponse(
+            annotation_id=annotation.id,
+            question_id=task.question_id,
+            annotation_count=task.question.annotation_count,
+            required_annotations=task.question.required_annotations,
+            question_status=task.question.annotation_status,
+            aggregate_id=None,
+            is_disputed=False,
         )
 
     def claim_review_tasks(self, payload: ClaimReviewTaskRequest) -> ClaimReviewTaskResponse:
@@ -1677,6 +1893,43 @@ class AnnotationService:
             ],
         )
 
+    def _build_annotation_policy_settings(
+        self,
+        annotator_count: int,
+    ) -> AnnotationPolicySettingsOut:
+        return AnnotationPolicySettingsOut(
+            annotator_count=annotator_count,
+            review_required=annotator_count > 1,
+            strategy_description=describe_annotation_policy(annotator_count),
+            sync_status=AnnotationPolicySyncStatusOut(**self.policy_store.get_sync_status()),
+        )
+
+    def _count_idle_questions_pending_policy_change(self, annotator_count: int) -> int:
+        return int(
+            self.db.scalar(
+                select(func.count())
+                .select_from(Question)
+                .where(Question.source_status == "ACTIVE")
+                .where(Question.annotation_status.in_([QUESTION_STATUS_PENDING, QUESTION_STATUS_WAITING]))
+                .where(Question.annotation_count == 0)
+                .where(Question.required_annotations != annotator_count)
+            )
+            or 0
+        )
+
+    def _apply_annotation_policy_to_idle_questions(self, annotator_count: int) -> int:
+        result = self.db.execute(
+            update(Question)
+            .where(Question.source_status == "ACTIVE")
+            .where(Question.annotation_status.in_([QUESTION_STATUS_PENDING, QUESTION_STATUS_WAITING]))
+            .where(Question.annotation_count == 0)
+            .where(Question.required_annotations != annotator_count)
+            .values(required_annotations=annotator_count)
+        )
+        return int(
+            result.rowcount or 0
+        )
+
     def _build_progress(
         self,
         *,
@@ -1820,14 +2073,21 @@ class AnnotationService:
             )
         )
         counts = self._question_status_counts(question_ids)
+        context = batch.context_json or {}
+        source_run_no = context.get("source_run_no")
+        if not source_run_no:
+            source_run_no = self.db.scalar(
+                select(ModelCoresetRun.run_no).where(ModelCoresetRun.recommendation_batch_id == batch.id)
+            )
         return SelectionBatchSummaryOut(
             id=batch.id,
             batch_no=batch.batch_no,
             algorithm_code=batch.algorithm_code,
+            source_run_no=str(source_run_no) if source_run_no else None,
             triggered_by_user_id=batch.triggered_by_user_id,
             created_at=batch.created_at,
-            requested_count=int((batch.context_json or {}).get("requested_count") or len(question_ids)),
-            candidate_count=int((batch.context_json or {}).get("candidate_count") or len(question_ids)),
+            requested_count=int(context.get("requested_count") or len(question_ids)),
+            candidate_count=int(context.get("candidate_count") or len(question_ids)),
             selected_count=len(question_ids),
             pending_count=counts.get(QUESTION_STATUS_PENDING, 0),
             waiting_count=counts.get(QUESTION_STATUS_WAITING, 0),

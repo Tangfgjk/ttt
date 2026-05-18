@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session, selectinload
 
+from app.models.imports import SourceQuestionRecord
 from app.models.question import (
     Question,
     QuestionCatalog,
@@ -18,6 +19,7 @@ from app.models.question import (
 class QuestionFilters:
     page: int = 1
     page_size: int = 20
+    question_id: int | None = None
     keyword: str | None = None
     subject_id: int | None = None
     grade_id: int | None = None
@@ -48,6 +50,35 @@ class QuestionRepository:
         stmt = self._base_query().where(Question.id == question_id)
         return self.db.scalar(stmt)
 
+    def get_source_difficulty_level(self, question_id: int) -> int | None:
+        stmt = (
+            select(SourceQuestionRecord.raw_payload)
+            .where(SourceQuestionRecord.normalized_question_id == question_id)
+            .order_by(SourceQuestionRecord.id.desc())
+        )
+        for payload in self.db.scalars(stmt):
+            if not isinstance(payload, dict):
+                continue
+            value = payload.get("difficulty")
+            if value in (None, ""):
+                value = payload.get("难度标签")
+            if value in (None, ""):
+                continue
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                continue
+        return None
+
+    def list_difficulty_level_stats(self) -> list[tuple[int, int]]:
+        stmt = (
+            select(Question.difficulty_level, func.count(Question.id))
+            .where(Question.difficulty_level.is_not(None))
+            .group_by(Question.difficulty_level)
+            .order_by(Question.difficulty_level.asc())
+        )
+        return [(int(level), int(count)) for level, count in self.db.execute(stmt).all() if level is not None]
+
     def _base_query(self) -> Select[tuple[Question]]:
         return select(Question).options(
             selectinload(Question.subject),
@@ -64,6 +95,8 @@ class QuestionRepository:
         stmt: Select[tuple[Question]],
         filters: QuestionFilters,
     ) -> Select[tuple[Question]]:
+        if filters.question_id:
+            stmt = stmt.where(Question.id == filters.question_id)
         if filters.keyword:
             # Querying against the content table keeps the list API useful even
             # before we introduce a dedicated search index.

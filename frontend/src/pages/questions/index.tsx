@@ -24,9 +24,16 @@ import {
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
+import { formatBackendDateTime } from "@/app/date-time";
 import { usePageHashScroll } from "@/app/use-page-hash-scroll";
 import { useAuthStore } from "@/app/store/auth-store";
 import { QuestionRichText } from "@/components/question-rich-text";
+import {
+  annotationStatusOptions,
+  getAnnotationStatusColor,
+  getAnnotationStatusLabel,
+  getAnnotationTaskStatusLabel,
+} from "@/constants/annotation-status";
 import {
   useAdminQuestionReview,
 } from "@/modules/annotations/hooks";
@@ -43,29 +50,12 @@ import type { QuestionDetail, QuestionListItem, QuestionListParams } from "@/typ
 
 const DEFAULT_PAGE_SIZE = 20;
 
-const annotationStatusOptions = [
-  { label: "全部状态", value: "" },
-  { label: "未标注池", value: "PENDING" },
-  { label: "待标注池", value: "WAITING" },
-  { label: "领取锁定池", value: "IN_PROGRESS" },
-  { label: "待复核池", value: "REVIEW_PENDING" },
-  { label: "已标注池", value: "COMPLETED" },
-];
-
 const detailViewModeOptions = [
   { label: "渲染视图", value: "rendered" },
   { label: "原始文本", value: "raw" },
 ] as const;
 
 type DetailViewMode = (typeof detailViewModeOptions)[number]["value"];
-
-const statusColorMap: Record<string, string> = {
-  PENDING: "gold",
-  WAITING: "blue",
-  IN_PROGRESS: "purple",
-  REVIEW_PENDING: "orange",
-  COMPLETED: "green",
-};
 
 function RawTextBlock({
   value,
@@ -78,6 +68,22 @@ function RawTextBlock({
     return <Typography.Text type="secondary">{emptyLabel}</Typography.Text>;
   }
   return <pre className="question-raw-block">{value}</pre>;
+}
+
+function renderDifficultyStats(detail: QuestionDetail) {
+  if (!detail.difficulty_level_stats.length) {
+    return <Typography.Text type="secondary">暂无难度等级统计</Typography.Text>;
+  }
+
+  return (
+    <Space size={[8, 8]} wrap>
+      {detail.difficulty_level_stats.map((item) => (
+        <Tag key={item.level} color={detail.source_difficulty_level === item.level ? "processing" : "default"}>
+          {`L${item.level} · ${item.question_count}题`}
+        </Tag>
+      ))}
+    </Space>
+  );
 }
 
 function QuestionDetailDrawerContent({
@@ -119,15 +125,37 @@ function QuestionDetailDrawerContent({
           {
             key: "annotation_status",
             label: "标注状态",
-            children: <Tag color={statusColorMap[detail.annotation_status] ?? "default"}>{detail.annotation_status}</Tag>,
+            children: (
+              <Tag color={getAnnotationStatusColor(detail.annotation_status)}>
+                {getAnnotationStatusLabel(detail.annotation_status)}
+              </Tag>
+            ),
           },
           { key: "source_status", label: "来源状态", children: detail.source_status },
           { key: "difficulty", label: "难度", children: detail.difficulty_level ?? "-" },
+          ...(detail.source_difficulty_level !== null && detail.source_difficulty_level !== undefined
+            ? [
+                {
+                  key: "source_difficulty",
+                  label: "原始难度标签",
+                  children: detail.source_difficulty_level,
+                },
+              ]
+            : []),
           { key: "blank_count", label: "填空数量", children: detail.blank_count },
           { key: "annotation_count", label: "已标注人数", children: detail.annotation_count },
           { key: "required_annotations", label: "要求标注人数", children: detail.required_annotations },
         ]}
       />
+
+      <Card size="small" title="难度等级统计">
+        <Space direction="vertical" size={8} style={{ width: "100%" }}>
+          <Typography.Text type="secondary">
+            当前系统内已出现的难度标签，用来对照原始数据中的难度值。
+          </Typography.Text>
+          {renderDifficultyStats(detail)}
+        </Space>
+      </Card>
 
       <Card size="small" title="完整题干">
         {isRawMode ? (
@@ -241,7 +269,7 @@ function QuestionDetailDrawerContent({
                   <div key={annotation.annotation_id}>
                     <Space wrap>
                       <Typography.Text strong>{annotation.user_name}</Typography.Text>
-                      <Tag>{annotation.task_status ?? "-"}</Tag>
+                      <Tag>{annotation.task_status ? getAnnotationTaskStatusLabel(annotation.task_status) : "-"}</Tag>
                       <Tag color="blue">置信度 {annotation.confidence_level ?? "-"}</Tag>
                     </Space>
                     <Space size={[8, 8]} wrap style={{ marginTop: 8 }}>
@@ -280,10 +308,10 @@ function QuestionDetailDrawerContent({
             <Card size="small" title="复核流转摘要">
               <Space direction="vertical" size={8} style={{ width: "100%" }}>
                 <Typography.Text>
-                  争议题会自动进入复核员队列，由复核员处理所有未达成一致的素养维度。
+                  存在分歧的题目会自动进入复核员队列，由复核员处理所有未达成一致的素养维度。
                 </Typography.Text>
                 <Typography.Text type="secondary">
-                  管理员在这里主要查看三位标注员与复核员的操作链路，不再负责手动打回或补票分配。
+                  管理员在这里主要查看标注员与复核员的操作链路，不再负责手动打回或补票分配。
                 </Typography.Text>
                 <Space wrap>
                   <Tag color="orange">待处理复核任务 {adminReview.open_review_task_count}</Tag>
@@ -302,7 +330,7 @@ function QuestionDetailDrawerContent({
                       </Tag>
                       <Typography.Text strong>{log.action_label}</Typography.Text>
                       <Typography.Text type="secondary">
-                        {log.created_at.replace("T", " ").slice(0, 19)}
+                        {formatBackendDateTime(log.created_at)}
                       </Typography.Text>
                     </Space>
                     {log.comment ? (
@@ -357,6 +385,7 @@ export function QuestionsPage() {
 
   useEffect(() => {
     const questionIdParam = searchParams.get("question_id");
+    const filterQuestionIdParam = searchParams.get("filter_question_id");
     const annotationStatusParam = searchParams.get("annotation_status") ?? undefined;
     const questionIdsParam = searchParams.get("question_ids");
     const questionIds = questionIdsParam
@@ -364,6 +393,11 @@ export function QuestionsPage() {
       .map((item) => Number(item.trim()))
       .filter((item) => Number.isInteger(item) && item > 0);
 
+    const filterQuestionId = filterQuestionIdParam ? Number(filterQuestionIdParam) : undefined;
+
+    if (Number.isInteger(filterQuestionId) && (filterQuestionId as number) > 0) {
+      form.setFieldValue("filter_question_id", filterQuestionId);
+    }
     if (annotationStatusParam) {
       form.setFieldValue("annotation_status", annotationStatusParam);
     }
@@ -371,6 +405,10 @@ export function QuestionsPage() {
     setFilters((prev) => ({
       ...prev,
       page: 1,
+      question_id:
+        Number.isInteger(filterQuestionId) && (filterQuestionId as number) > 0
+          ? (filterQuestionId as number)
+          : undefined,
       annotation_status: annotationStatusParam,
       question_ids: questionIds?.length ? questionIds : undefined,
     }));
@@ -383,14 +421,22 @@ export function QuestionsPage() {
   }, [form, searchParams]);
 
   const handleSearch = (values: {
+    filter_question_id?: number | string;
     keyword?: string;
     subject_id?: number;
     grade_id?: number;
     question_type_id?: number;
     annotation_status?: string;
   }) => {
+    const normalizedQuestionId = Number(values.filter_question_id);
+    const nextQuestionId =
+      Number.isInteger(normalizedQuestionId) && normalizedQuestionId > 0
+        ? normalizedQuestionId
+        : undefined;
     const nextAnnotationStatus = values.annotation_status || undefined;
     setSearchParams((params) => {
+      if (nextQuestionId) params.set("filter_question_id", String(nextQuestionId));
+      else params.delete("filter_question_id");
       if (nextAnnotationStatus) params.set("annotation_status", nextAnnotationStatus);
       else params.delete("annotation_status");
       return params;
@@ -398,6 +444,7 @@ export function QuestionsPage() {
     setFilters({
       page: 1,
       page_size: pageSize,
+      question_id: nextQuestionId,
       keyword: values.keyword?.trim() || undefined,
       subject_id: values.subject_id || undefined,
       grade_id: values.grade_id || undefined,
@@ -410,6 +457,7 @@ export function QuestionsPage() {
   const handleReset = () => {
     form.resetFields();
     setSearchParams((params) => {
+      params.delete("filter_question_id");
       params.delete("annotation_status");
       params.delete("question_id");
       return params;
@@ -446,7 +494,9 @@ export function QuestionsPage() {
       title: "标注状态",
       dataIndex: "annotation_status",
       width: 150,
-      render: (value: string) => <Tag color={statusColorMap[value] ?? "default"}>{value}</Tag>,
+      render: (value: string) => (
+        <Tag color={getAnnotationStatusColor(value)}>{getAnnotationStatusLabel(value)}</Tag>
+      ),
     },
     {
       title: "题干摘要",
@@ -481,10 +531,10 @@ export function QuestionsPage() {
       <Card id="questions-overview" className="hero-panel page-section-anchor">
         <Space direction="vertical" size={4}>
           <Typography.Title level={3} style={{ margin: 0 }}>
-            统一题池
+            统一题目视图
           </Typography.Title>
           <Typography.Text type="secondary">
-            统一查看题池中的题目，可按标注状态、学科、年级和题型筛选，并进入详情抽屉查看完整题目内容。
+            统一查看各状态下的题目，可按标注状态、学科、年级和题型筛选，并进入详情抽屉查看完整题目内容。
           </Typography.Text>
         </Space>
       </Card>
@@ -492,7 +542,7 @@ export function QuestionsPage() {
       <Row gutter={[16, 16]}>
         <Col xs={24} md={8}>
           <Card>
-            <Statistic title="题池总量" value={overallTotal} />
+            <Statistic title="题目总量" value={overallTotal} />
           </Card>
         </Col>
         <Col xs={24} md={8}>
@@ -519,12 +569,17 @@ export function QuestionsPage() {
         ) : null}
         <Form form={form} layout="vertical" onFinish={handleSearch}>
           <Row gutter={[16, 8]}>
-            <Col xs={24} sm={12} lg={8}>
+            <Col xs={24} sm={12} lg={6}>
+              <Form.Item label="题目 ID" name="filter_question_id">
+                <Input placeholder="输入题目ID" allowClear />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12} lg={6}>
               <Form.Item label="关键词" name="keyword">
                 <Input prefix={<SearchOutlined />} placeholder="搜索题干关键词" allowClear />
               </Form.Item>
             </Col>
-            <Col xs={24} sm={12} lg={4}>
+            <Col xs={24} sm={12} lg={3}>
               <Form.Item label="学科" name="subject_id">
                 <Select
                   allowClear
@@ -533,7 +588,7 @@ export function QuestionsPage() {
                 />
               </Form.Item>
             </Col>
-            <Col xs={24} sm={12} lg={4}>
+            <Col xs={24} sm={12} lg={3}>
               <Form.Item label="年级" name="grade_id">
                 <Select
                   allowClear
@@ -542,7 +597,7 @@ export function QuestionsPage() {
                 />
               </Form.Item>
             </Col>
-            <Col xs={24} sm={12} lg={4}>
+            <Col xs={24} sm={12} lg={3}>
               <Form.Item label="题型" name="question_type_id">
                 <Select
                   allowClear
@@ -551,7 +606,7 @@ export function QuestionsPage() {
                 />
               </Form.Item>
             </Col>
-            <Col xs={24} sm={12} lg={4}>
+            <Col xs={24} sm={12} lg={3}>
               <Form.Item label="标注状态" name="annotation_status">
                 <Select allowClear options={annotationStatusOptions} placeholder="全部状态" />
               </Form.Item>
@@ -571,7 +626,7 @@ export function QuestionsPage() {
 
       <Card id="questions-list" className="page-section-anchor">
         {questionListQuery.isLoading ? (
-          <Result icon={<Spin size="large" />} title="正在加载题池数据" />
+          <Result icon={<Spin size="large" />} title="正在加载题目数据" />
         ) : (
           <Table<QuestionListItem>
             rowKey="id"

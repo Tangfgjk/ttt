@@ -104,6 +104,7 @@ class ActiveLearningService:
             prediction_runs=[self._prediction_run_out(item) for item in self._prediction_runs()],
             coreset_runs=[self._coreset_run_out(item) for item in self._coreset_runs()],
             coreset_incremental=self._coreset_incremental_summary(),
+            coreset_incremental_by_strategy=self._coreset_incremental_summaries_by_strategy(),
             trend_groups=self._trend_groups_out(model_versions),
             completed_sample_count=self._completed_sample_count(),
             pending_candidate_count=self._pending_candidate_count(),
@@ -275,11 +276,17 @@ class ActiveLearningService:
 
         baseline_run = None
         if payload.update_mode == "incremental":
-            baseline_run = self._resolve_incremental_baseline(payload.data_scope)
+            baseline_run = self._resolve_incremental_baseline(
+                payload.data_scope,
+                payload.strategy,
+            )
             if baseline_run is None:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="No successful CoreSet baseline exists yet. Please run a full-pool CoreSet first.",
+                    detail=(
+                        "No successful CoreSet baseline exists for this strategy. "
+                        "Please run a full-pool CoreSet with the selected strategy first."
+                    ),
                 )
 
         params_json = payload.model_dump()
@@ -456,29 +463,42 @@ class ActiveLearningService:
     def _resolve_incremental_baseline(
         self,
         data_scope: str,
+        strategy: str | None = None,
     ) -> ModelCoresetRun | None:
-        return self.db.scalar(
+        stmt = (
             select(ModelCoresetRun)
             .options(selectinload(ModelCoresetRun.recommendation_batch))
             .where(ModelCoresetRun.status == RUN_STATUS_SUCCESS)
             .where(ModelCoresetRun.data_scope == data_scope)
             .where(ModelCoresetRun.recommendation_batch_id.is_not(None))
-            .order_by(ModelCoresetRun.finished_at.desc(), ModelCoresetRun.id.desc())
+        )
+        if strategy:
+            stmt = stmt.where(ModelCoresetRun.strategy == strategy)
+        return self.db.scalar(
+            stmt.order_by(ModelCoresetRun.finished_at.desc(), ModelCoresetRun.id.desc())
             .limit(1)
         )
 
-    def _coreset_incremental_summary(self) -> CoresetIncrementalSummaryOut | None:
-        baseline_run = self._resolve_incremental_baseline("pending")
+    def _coreset_incremental_summary(
+        self,
+        strategy: str | None = None,
+    ) -> CoresetIncrementalSummaryOut | None:
+        baseline_run = self._resolve_incremental_baseline("pending", strategy)
         if baseline_run is None:
             return CoresetIncrementalSummaryOut(can_run_incremental=False, data_scope="pending")
 
         cutoff = _snapshot_cutoff_from_run(baseline_run)
-        incremental_candidate_count = self._count_incremental_candidates(
+        current_pool_count = self._count_incremental_candidates(
+            data_scope="pending",
+            created_after=None,
+        )
+        new_unlabeled_count = self._count_incremental_candidates(
             data_scope="pending",
             created_after=cutoff,
         )
         anchor_count = self._count_incremental_anchor_questions(
             data_scope="pending",
+            strategy=baseline_run.strategy,
             up_to_created_at=baseline_run.created_at,
         )
         return CoresetIncrementalSummaryOut(
@@ -492,10 +512,20 @@ class ActiveLearningService:
             baseline_strategy=baseline_run.strategy,
             baseline_finished_at=baseline_run.finished_at,
             baseline_selected_count=baseline_run.selected_count,
-            incremental_candidate_count=incremental_candidate_count,
+            current_pool_count=current_pool_count,
+            new_unlabeled_count=new_unlabeled_count,
+            incremental_candidate_count=new_unlabeled_count,
             anchor_count=anchor_count,
             snapshot_created_before=cutoff,
         )
+
+    def _coreset_incremental_summaries_by_strategy(self) -> dict[str, CoresetIncrementalSummaryOut]:
+        strategies = ["random", "kmeans", "facility_location", "graph_cut", "moe"]
+        return {
+            strategy: self._coreset_incremental_summary(strategy)
+            or CoresetIncrementalSummaryOut(can_run_incremental=False, data_scope="pending")
+            for strategy in strategies
+        }
 
     def _count_incremental_candidates(
         self,
@@ -519,6 +549,7 @@ class ActiveLearningService:
         self,
         *,
         data_scope: str,
+        strategy: str | None = None,
         up_to_created_at: datetime | None,
     ) -> int:
         stmt = (
@@ -531,6 +562,8 @@ class ActiveLearningService:
             .where(ModelCoresetRun.status == RUN_STATUS_SUCCESS)
             .where(ModelCoresetRun.data_scope == data_scope)
         )
+        if strategy:
+            stmt = stmt.where(ModelCoresetRun.strategy == strategy)
         if up_to_created_at is not None:
             stmt = stmt.where(ModelCoresetRun.created_at <= up_to_created_at)
         return int(self.db.scalar(stmt) or 0)
@@ -1566,11 +1599,19 @@ class _ActiveLearningRunner:
             candidates = self._coreset_candidates(
                 data_scope=params.data_scope,
                 embedding_model_id=embedding_model.id,
-                created_after=baseline_cutoff if update_mode == "incremental" else None,
+            )
+            new_unlabeled_count = (
+                self._count_incremental_candidates(
+                    data_scope=params.data_scope,
+                    created_after=baseline_cutoff,
+                )
+                if update_mode == "incremental"
+                else 0
             )
             anchor_candidates = (
                 self._incremental_anchor_candidates(
                     data_scope=params.data_scope,
+                    strategy=run.strategy,
                     embedding_model_id=embedding_model.id,
                     up_to_created_at=baseline_run.created_at if baseline_run else None,
                 )
@@ -1598,6 +1639,8 @@ class _ActiveLearningRunner:
                 if snapshot_created_before
                 else None,
                 anchor_count=anchor_count if update_mode == "incremental" else None,
+                current_pool_count=len(candidates),
+                new_unlabeled_count=new_unlabeled_count if update_mode == "incremental" else None,
             )
             self.db.commit()
 
@@ -1625,6 +1668,8 @@ class _ActiveLearningRunner:
                     if snapshot_created_before
                     else None,
                     anchor_count=anchor_count if update_mode == "incremental" else None,
+                    current_pool_count=len(candidates),
+                    new_unlabeled_count=new_unlabeled_count if update_mode == "incremental" else None,
                 )
                 self.db.commit()
                 return
@@ -1659,6 +1704,8 @@ class _ActiveLearningRunner:
                     if snapshot_created_before
                     else None,
                     anchor_count=anchor_count if update_mode == "incremental" else None,
+                    current_pool_count=len(candidates),
+                    new_unlabeled_count=new_unlabeled_count if update_mode == "incremental" else None,
                 )
                 self.db.commit()
 
@@ -1728,8 +1775,12 @@ class _ActiveLearningRunner:
                 triggered_by_user_id=run.triggered_by_user_id,
                 target_stage="annotation_pool",
                 context_json={
+                    "source_run_id": run.id,
+                    "source_run_no": run.run_no,
                     "requested_count": run.requested_count,
                     "candidate_count": len(candidates),
+                    "current_pool_count": len(candidates),
+                    "new_unlabeled_count": new_unlabeled_count,
                     "data_scope": run.data_scope,
                     "update_mode": update_mode,
                     "status_from": QUESTION_STATUS_PENDING if run.data_scope == "pending" else "ALL",
@@ -1791,6 +1842,8 @@ class _ActiveLearningRunner:
                     },
                     metrics_json={
                         "candidate_count": len(candidates),
+                        "current_pool_count": len(candidates),
+                        "new_unlabeled_count": new_unlabeled_count,
                         "working_candidate_count": len(candidates),
                         "selected_count": len(selections),
                         "moved_count": moved_count,
@@ -1835,6 +1888,8 @@ class _ActiveLearningRunner:
                 if snapshot_created_before
                 else None,
                 anchor_count=anchor_count if update_mode == "incremental" else None,
+                current_pool_count=len(candidates),
+                new_unlabeled_count=new_unlabeled_count if update_mode == "incremental" else None,
                 cluster_count=_summary_int(selection_summary, "cluster_count"),
                 nonempty_cluster_count=_summary_int(
                     selection_summary, "nonempty_cluster_count"
@@ -1929,6 +1984,7 @@ class _ActiveLearningRunner:
         self,
         *,
         data_scope: str,
+        strategy: str,
         embedding_model_id: int,
         up_to_created_at: datetime | None,
     ) -> list[CoresetCandidate]:
@@ -1955,6 +2011,7 @@ class _ActiveLearningRunner:
             )
             .where(ModelCoresetRun.status == RUN_STATUS_SUCCESS)
             .where(ModelCoresetRun.data_scope == data_scope)
+            .where(ModelCoresetRun.strategy == strategy)
             .order_by(Question.id.asc(), ModelCoresetRun.created_at.asc())
         )
         if up_to_created_at is not None:
@@ -1998,6 +2055,7 @@ class _ActiveLearningRunner:
         self,
         *,
         data_scope: str,
+        strategy: str | None = None,
         up_to_created_at: datetime | None,
     ) -> int:
         stmt = (
@@ -2010,6 +2068,8 @@ class _ActiveLearningRunner:
             .where(ModelCoresetRun.status == RUN_STATUS_SUCCESS)
             .where(ModelCoresetRun.data_scope == data_scope)
         )
+        if strategy:
+            stmt = stmt.where(ModelCoresetRun.strategy == strategy)
         if up_to_created_at is not None:
             stmt = stmt.where(ModelCoresetRun.created_at <= up_to_created_at)
         return int(self.db.scalar(stmt) or 0)
@@ -2021,13 +2081,16 @@ class _ActiveLearningRunner:
     ) -> ModelCoresetRun | None:
         baseline_run_id = _summary_int(run.metrics_json or {}, "baseline_run_id")
         if baseline_run_id is not None:
-            return self.db.scalar(
+            baseline = self.db.scalar(
                 select(ModelCoresetRun)
                 .options(selectinload(ModelCoresetRun.recommendation_batch))
                 .where(ModelCoresetRun.id == baseline_run_id)
             )
+            if baseline is not None and baseline.strategy == run.strategy:
+                return baseline
+            return None
         if (run.params_json or {}).get("update_mode") == "incremental":
-            return self._resolve_incremental_baseline(data_scope)
+            return self._resolve_incremental_baseline(data_scope, run.strategy)
         return None
 
     def _coreset_metrics(
@@ -2052,6 +2115,8 @@ class _ActiveLearningRunner:
         baseline_batch_no: str | None = None,
         snapshot_created_before: str | None = None,
         anchor_count: int | None = None,
+        current_pool_count: int | None = None,
+        new_unlabeled_count: int | None = None,
         cluster_count: int | None = None,
         nonempty_cluster_count: int | None = None,
         largest_cluster_size: int | None = None,
@@ -2092,6 +2157,10 @@ class _ActiveLearningRunner:
             metrics["snapshot_created_before"] = snapshot_created_before
         if anchor_count is not None:
             metrics["anchor_count"] = anchor_count
+        if current_pool_count is not None:
+            metrics["current_pool_count"] = current_pool_count
+        if new_unlabeled_count is not None:
+            metrics["new_unlabeled_count"] = new_unlabeled_count
         if cluster_count is not None:
             metrics["cluster_count"] = cluster_count
         if nonempty_cluster_count is not None:

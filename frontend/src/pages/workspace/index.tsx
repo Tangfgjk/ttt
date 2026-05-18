@@ -27,18 +27,18 @@ export function WorkspacePage() {
                   onClick: () => navigate("/review"),
                 }
               : {
-                  label: "当前没有已领取复核题，可以去复核页领取新的争议题。",
+                  label: "当前没有已领取复核题，可以去复核页一键领取新的待复核题。",
                   tone: "blue",
-                  actionLabel: "去领取复核题",
+                  actionLabel: "去领取待复核题",
                   onClick: () => navigate("/review"),
                 },
             summary?.completed_today_count
               ? {
-                  label: `今天已完成 ${summary.completed_today_count} 道复核，当前节奏不错，可以继续处理新争议题。`,
+                  label: `今天已完成 ${summary.completed_today_count} 道复核，当前节奏不错，可以继续处理新的待复核题。`,
                   tone: "green",
                 }
               : {
-                  label: "今天还没有完成复核，建议优先处理一条高争议题，尽快建立当日进度。",
+                  label: "今天还没有完成复核，建议优先处理一条待复核题，尽快建立当日进度。",
                   tone: "gold",
                   actionLabel: "开始复核",
                   onClick: () => navigate("/review"),
@@ -131,7 +131,7 @@ export function WorkspacePage() {
           我的工作台
         </Typography.Title>
         <Typography.Paragraph>
-          这里优先展示“我今天该做什么”。标注员可以继续做题并回看自己的历史标注；复核员可以继续处理争议题，并查看自己已经完成的复核记录。
+          这里优先展示“我今天该做什么”。标注员可以继续做题并回看自己的历史标注；复核员可以继续处理待复核题，并查看自己已经完成的复核记录。
         </Typography.Paragraph>
         <Space wrap>
           <Tag color="green">{session?.name}</Tag>

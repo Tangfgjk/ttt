@@ -196,6 +196,8 @@ class CoresetIncrementalSummaryOut(BaseModel):
     baseline_strategy: SelectionStrategy | None = None
     baseline_finished_at: datetime | None = None
     baseline_selected_count: int = 0
+    current_pool_count: int = 0
+    new_unlabeled_count: int = 0
     incremental_candidate_count: int = 0
     anchor_count: int = 0
     snapshot_created_before: datetime | None = None
@@ -238,6 +240,7 @@ class ActiveLearningOverviewResponse(BaseModel):
     prediction_runs: list[PredictionRunOut]
     coreset_runs: list[CoresetRunOut] = Field(default_factory=list)
     coreset_incremental: CoresetIncrementalSummaryOut | None = None
+    coreset_incremental_by_strategy: dict[str, CoresetIncrementalSummaryOut] = Field(default_factory=dict)
     trend_groups: list[TrendGroupOut] = Field(default_factory=list)
     completed_sample_count: int
     pending_candidate_count: int

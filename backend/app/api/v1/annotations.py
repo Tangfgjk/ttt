@@ -1,18 +1,24 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.schemas.annotations import (
     AdminAggregateOverrideRequest,
+    AnnotationPolicySettingsOut,
+    AnnotationPolicyUpdateRequest,
+    AnnotationPolicyUpdateResponse,
     AdminQuestionReviewOut,
     AdminPoolResetRequest,
     AdminPoolResetResponse,
     AdminReviewDecisionRequest,
     AdminSelectionRequest,
     AdminSelectionResponse,
+    AnnotatorHistoryAdoptionStatus,
     AnnotatorHistoryListResponse,
+    AnnotatorHistoryReviewState,
+    AnnotatorHistoryTimeRange,
     AnnotationTaskListResponse,
     ClaimAnnotationRequest,
     ClaimAnnotationResponse,
@@ -39,6 +45,26 @@ router = APIRouter()
 @router.get("/pools/summary", response_model=PoolSummaryResponse)
 async def pool_summary(db: Session = Depends(get_db)) -> PoolSummaryResponse:
     return AnnotationService(db).pool_summary()
+
+
+@router.get("/admin/policy", response_model=AnnotationPolicySettingsOut)
+async def get_annotation_policy(db: Session = Depends(get_db)) -> AnnotationPolicySettingsOut:
+    return AnnotationService(db).get_annotation_policy()
+
+
+@router.post("/admin/policy", response_model=AnnotationPolicyUpdateResponse)
+async def update_annotation_policy(
+    payload: AnnotationPolicyUpdateRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> AnnotationPolicyUpdateResponse:
+    service = AnnotationService(db)
+    response = service.update_annotation_policy(payload)
+    background_tasks.add_task(
+        AnnotationService.apply_annotation_policy_to_idle_questions_async,
+        int(payload.annotator_count),
+    )
+    return response
 
 
 @router.get("/workspace-summary", response_model=WorkspaceSummaryOut)
@@ -123,12 +149,20 @@ async def list_my_annotation_history(
     annotator_user_id: int = Query(...),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
+    keyword: str | None = Query(default=None),
+    review_state: AnnotatorHistoryReviewState | None = Query(default=None),
+    adoption_status: AnnotatorHistoryAdoptionStatus | None = Query(default=None),
+    time_range: AnnotatorHistoryTimeRange | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> AnnotatorHistoryListResponse:
     items, total = AnnotationService(db).list_annotator_history(
         annotator_user_id=annotator_user_id,
         page=page,
         page_size=page_size,
+        keyword=keyword,
+        review_state=review_state,
+        adoption_status=adoption_status,
+        time_range=time_range,
     )
     return AnnotatorHistoryListResponse(
         items=items,
@@ -143,6 +177,15 @@ async def submit_annotation(
     db: Session = Depends(get_db),
 ) -> SubmitAnnotationResponse:
     return AnnotationService(db).submit_annotation(task_id, payload)
+
+
+@router.post("/tasks/{task_id}/revise", response_model=SubmitAnnotationResponse)
+async def revise_annotation(
+    task_id: int,
+    payload: SubmitAnnotationRequest,
+    db: Session = Depends(get_db),
+) -> SubmitAnnotationResponse:
+    return AnnotationService(db).revise_annotation(task_id, payload)
 
 
 @router.post("/review-tasks/claim", response_model=ClaimReviewTaskResponse)

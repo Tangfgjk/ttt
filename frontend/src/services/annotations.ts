@@ -1,6 +1,9 @@
 import { apiClient } from "@/services/api-client";
 import type {
-  AdminAggregateOverrideRequest,
+    AdminAggregateOverrideRequest,
+  AnnotationPolicySettings,
+  AnnotationPolicyUpdateRequest,
+  AnnotationPolicyUpdateResponse,
   AdminQuestionReview,
   AdminPoolResetRequest,
   AdminPoolResetResponse,
@@ -28,6 +31,22 @@ import type {
 
 export async function getAnnotationPoolSummary() {
   const response = await apiClient.get<PoolSummaryResponse>("/annotations/pools/summary");
+  return response.data;
+}
+
+export async function getAnnotationPolicy() {
+  const response = await apiClient.get<AnnotationPolicySettings>("/annotations/admin/policy", {
+    timeout: 60_000,
+  });
+  return response.data;
+}
+
+export async function updateAnnotationPolicy(payload: AnnotationPolicyUpdateRequest) {
+  const response = await apiClient.post<AnnotationPolicyUpdateResponse>(
+    "/annotations/admin/policy",
+    payload,
+    { timeout: 60_000 },
+  );
   return response.data;
 }
 
@@ -97,6 +116,10 @@ export async function getAnnotatorHistory(params: {
   annotator_user_id: number;
   page?: number;
   page_size?: number;
+  keyword?: string;
+  review_state?: "NOT_REQUIRED" | "PENDING" | "COMPLETED";
+  adoption_status?: "PENDING" | "PASSED" | "OVERRIDDEN";
+  time_range?: "7d" | "30d";
 }) {
   const response = await apiClient.get<AnnotatorHistoryListResponse>("/annotations/history", {
     params,
@@ -107,6 +130,14 @@ export async function getAnnotatorHistory(params: {
 export async function submitAnnotationTask(taskId: number, payload: SubmitAnnotationRequest) {
   const response = await apiClient.post<SubmitAnnotationResponse>(
     `/annotations/tasks/${taskId}/submit`,
+    payload,
+  );
+  return response.data;
+}
+
+export async function reviseAnnotationTask(taskId: number, payload: SubmitAnnotationRequest) {
+  const response = await apiClient.post<SubmitAnnotationResponse>(
+    `/annotations/tasks/${taskId}/revise`,
     payload,
   );
   return response.data;

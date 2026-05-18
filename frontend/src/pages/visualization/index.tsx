@@ -21,19 +21,15 @@ import { useNavigate } from "react-router-dom";
 
 import { usePageHashScroll } from "@/app/use-page-hash-scroll";
 import {
+  annotationStatusOptions as sharedAnnotationStatusOptions,
+  getAnnotationStatusLabel,
+} from "@/constants/annotation-status";
+import {
   getEmbeddingStatus,
   getQuestionDistribution,
   rebuildMissingEmbeddings,
 } from "@/services/visualization";
 import type { DistributionPoint, VisualizationMethod } from "@/types/visualization";
-
-const statusLabels: Record<string, string> = {
-  PENDING: "未标注",
-  WAITING: "待标注",
-  IN_PROGRESS: "标注中",
-  REVIEW_PENDING: "待复核",
-  COMPLETED: "已完成",
-};
 
 const statusColors: Record<string, string> = {
   PENDING: "#8c8c8c",
@@ -45,11 +41,9 @@ const statusColors: Record<string, string> = {
 
 const statusOptions = [
   { label: "全部数据", value: "all" },
-  { label: "未标注", value: "PENDING" },
-  { label: "待标注", value: "WAITING" },
-  { label: "标注中", value: "IN_PROGRESS" },
-  { label: "待复核", value: "REVIEW_PENDING" },
-  { label: "已完成", value: "COMPLETED" },
+  ...sharedAnnotationStatusOptions
+    .filter((item) => item.value)
+    .map((item) => ({ label: item.label, value: item.value })),
 ];
 
 const methodOptions: Array<{ label: string; value: VisualizationMethod }> = [
@@ -116,7 +110,7 @@ export function VisualizationPage() {
         return groups;
       }, {}),
     ).map(([itemStatus, pointsForStatus]) => ({
-      name: statusLabels[itemStatus] ?? itemStatus,
+      name: getAnnotationStatusLabel(itemStatus),
       type: "scatter",
       symbolSize: 7,
       progressive: 4000,
@@ -158,7 +152,7 @@ export function VisualizationPage() {
           if (!point) return "";
           return [
             `题目 #${point.question_id}`,
-            `状态：${statusLabels[point.annotation_status] ?? point.annotation_status}`,
+            `状态：${getAnnotationStatusLabel(point.annotation_status)}`,
             `进度：${point.annotation_count}/${point.required_annotations}`,
             point.stem_preview,
           ].join("<br/>");
@@ -234,8 +228,8 @@ export function VisualizationPage() {
         <Col xs={24} lg={10}>
           <Card title="状态统计">
             <Space wrap>
-              {Object.entries(statusLabels).map(([key, label]) => (
-                <Tag key={key} color={statusColors[key]}>{label} {summary[key] ?? 0}</Tag>
+              {Object.entries(statusColors).map(([key, color]) => (
+                <Tag key={key} color={color}>{getAnnotationStatusLabel(key)} {summary[key] ?? 0}</Tag>
               ))}
             </Space>
           </Card>
@@ -248,7 +242,7 @@ export function VisualizationPage() {
                   <Descriptions.Item label="题目 ID">#{selectedPoint.question_id}</Descriptions.Item>
                   <Descriptions.Item label="状态">
                     <Tag color={statusColors[selectedPoint.annotation_status]}>
-                      {statusLabels[selectedPoint.annotation_status] ?? selectedPoint.annotation_status}
+                      {getAnnotationStatusLabel(selectedPoint.annotation_status)}
                     </Tag>
                   </Descriptions.Item>
                   <Descriptions.Item label="标注进度">

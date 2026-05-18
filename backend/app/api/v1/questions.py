@@ -7,6 +7,7 @@ from app.db.session import get_db
 from app.repositories.question_repository import QuestionFilters
 from app.schemas.pagination import PageMeta
 from app.schemas.question import (
+    DifficultyLevelStatOut,
     ExternalRefOut,
     QuestionCatalogOut,
     QuestionDetailResponse,
@@ -40,10 +41,16 @@ def _build_question_list_item(question) -> QuestionListItem:
     return QuestionListItem.model_validate(question)
 
 
-def _build_question_detail(question) -> QuestionDetailResponse:
+def _build_question_detail(
+    question,
+    *,
+    source_difficulty_level: int | None,
+    difficulty_level_stats: list[DifficultyLevelStatOut],
+) -> QuestionDetailResponse:
     return QuestionDetailResponse(
         id=question.id,
         difficulty_level=question.difficulty_level,
+        source_difficulty_level=source_difficulty_level,
         blank_count=question.blank_count,
         has_subquestions=question.has_subquestions,
         source_status=question.source_status,
@@ -87,11 +94,13 @@ def _build_question_detail(question) -> QuestionDetailResponse:
             )
             for item in question.catalogs
         ],
+        difficulty_level_stats=difficulty_level_stats,
     )
 
 
 @router.get("/", response_model=QuestionListResponse)
 async def list_questions(
+    filter_question_id: int | None = Query(default=None, ge=1),
     keyword: str | None = Query(default=None),
     subject_id: int | None = Query(default=None),
     grade_id: int | None = Query(default=None),
@@ -107,6 +116,7 @@ async def list_questions(
     filters = QuestionFilters(
         page=page,
         page_size=page_size,
+        question_id=filter_question_id,
         keyword=keyword,
         subject_id=subject_id,
         grade_id=grade_id,
@@ -128,5 +138,9 @@ async def get_question_detail(
     db: Session = Depends(get_db),
 ) -> QuestionDetailResponse:
     service = QuestionService(db)
-    question = service.get_question_detail(question_id)
-    return _build_question_detail(question)
+    question, source_difficulty_level, difficulty_level_stats = service.get_question_detail(question_id)
+    return _build_question_detail(
+        question,
+        source_difficulty_level=source_difficulty_level,
+        difficulty_level_stats=difficulty_level_stats,
+    )

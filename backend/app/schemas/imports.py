@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -55,6 +56,7 @@ class ImportSourceRecordOut(BaseModel):
     duplicate_candidate_count: int = 0
     source_preview: str | None = None
     normalized_question_preview: str | None = None
+    raw_payload: dict[str, Any] | None = None
     error_message: str | None = None
 
 

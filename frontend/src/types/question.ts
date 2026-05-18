@@ -46,13 +46,14 @@ export type QuestionListResponse = {
 export type QuestionListParams = {
   page?: number;
   page_size?: number;
+  question_id?: number;
   keyword?: string;
   subject_id?: number;
   grade_id?: number;
   question_type_id?: number;
   annotation_status?: string;
   source_status?: string;
-   question_ids?: number[];
+  question_ids?: number[];
 };
 
 export type QuestionExternalRef = {
@@ -81,8 +82,15 @@ export type QuestionCatalog = {
   school_code?: string | null;
 };
 
+export type DifficultyLevelStat = {
+  level: number;
+  question_count: number;
+};
+
 export type QuestionDetail = QuestionListItem & {
+  source_difficulty_level?: number | null;
   external_refs: QuestionExternalRef[];
   knowledge_points: QuestionKnowledgePoint[];
   catalogs: QuestionCatalog[];
+  difficulty_level_stats: DifficultyLevelStat[];
 };

@@ -4,6 +4,8 @@ import type { QuestionDetail, QuestionListParams, QuestionListResponse } from "@
 export async function getQuestionList(params: QuestionListParams = {}) {
   const queryParams = {
     ...params,
+    filter_question_id: params.question_id,
+    question_id: undefined,
     question_ids: params.question_ids?.length
       ? params.question_ids.join(",")
       : undefined,

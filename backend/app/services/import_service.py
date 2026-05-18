@@ -38,6 +38,7 @@ from app.schemas.imports import (
     ImportSourceRecordOut,
 )
 from app.schemas.pagination import PageMeta
+from app.services.annotation_policy import AnnotationPolicyStore
 from app.services.embedding_service import EmbeddingService
 from app.services.question_dedup_service import DedupDecision, DedupInput, QuestionDedupService
 
@@ -72,6 +73,7 @@ class ImportService:
         self.db = db
         self.repository = ImportRepository(db)
         self.dedup_service = QuestionDedupService(db)
+        self.policy_store = AnnotationPolicyStore(db)
         self.settings = get_settings()
 
     def list_batches(self) -> list[ImportBatch]:
@@ -96,6 +98,7 @@ class ImportService:
         batch_id: int,
         *,
         parse_status: str | None = None,
+        normalized_question_id: int | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> ImportSourceRecordListOut:
@@ -107,11 +110,16 @@ class ImportService:
         records = self.repository.list_source_records_by_batch(
             batch_id,
             parse_status=parse_status,
+            normalized_question_id=normalized_question_id,
             offset=offset,
             limit=page_size,
         )
         duplicate_counts = self.repository.count_duplicate_candidates_by_source_record(batch_id)
-        total = self.repository.count_source_records_by_batch(batch_id, parse_status=parse_status)
+        total = self.repository.count_source_records_by_batch(
+            batch_id,
+            parse_status=parse_status,
+            normalized_question_id=normalized_question_id,
+        )
         return ImportSourceRecordListOut(
             items=[self.serialize_source_record(item, duplicate_counts.get(item.id, 0)) for item in records],
             meta=PageMeta(page=page, page_size=page_size, total=total),
@@ -773,6 +781,7 @@ class ImportService:
         fingerprint_hash: str,
     ) -> Question:
         sub_questions = payload.get("subQues") or []
+        annotator_count = self.policy_store.get_annotator_count()
         question = self.repository.save_question(
             Question(
                 subject_id=subject_id,
@@ -783,7 +792,7 @@ class ImportService:
                 has_subquestions=bool(payload.get("subQueNum") or sub_questions),
                 source_status="ACTIVE",
                 annotation_status="PENDING",
-                required_annotations=3,
+                required_annotations=annotator_count,
                 annotation_count=0,
             )
         )
@@ -939,7 +948,7 @@ class ImportService:
         )
 
     def _mark_question_as_completed_from_gold_label(self, question: Question) -> None:
-        required_annotations = question.required_annotations or 3
+        required_annotations = question.required_annotations or self.policy_store.get_annotator_count()
         question.annotation_count = max(question.annotation_count or 0, required_annotations)
         question.annotation_status = "COMPLETED"
         self.repository.save_question(question)
@@ -1015,6 +1024,7 @@ class ImportService:
         blank_count: int = 0,
         stem_html: str | None = None,
     ) -> Question:
+        annotator_count = self.policy_store.get_annotator_count()
         question = self.repository.save_question(
             Question(
                 subject_id=subject_id,
@@ -1025,7 +1035,7 @@ class ImportService:
                 has_subquestions=False,
                 source_status="ACTIVE",
                 annotation_status="PENDING",
-                required_annotations=3,
+                required_annotations=annotator_count,
                 annotation_count=0,
             )
         )
@@ -1215,6 +1225,7 @@ class ImportService:
             duplicate_candidate_count=duplicate_candidate_count,
             source_preview=self._first_text(payload, "question", "stem", "content", "question_text", "questionText"),
             normalized_question_preview=normalized_preview,
+            raw_payload=payload,
             error_message=source_record.error_message,
         )
 

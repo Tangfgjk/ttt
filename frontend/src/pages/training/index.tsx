@@ -4,8 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Key } from "react";
 import { useNavigate } from "react-router-dom";
 
+import { formatBackendDateTime as formatDateTime } from "@/app/date-time";
 import { usePageHashScroll } from "@/app/use-page-hash-scroll";
 import { useAuthStore } from "@/app/store/auth-store";
+import { annotationStatusLabelMap } from "@/constants/annotation-status";
+import { getRunStatusColor, getRunStatusLabel } from "@/constants/run-status";
 import {
   useActiveLearningOverview,
   useActivateModelVersion,
@@ -24,11 +27,7 @@ import type {
   TrainingRun,
   TrendGroup,
 } from "@/types/active-learning";
-import type {
-  AnnotationPoolStatus,
-  SelectionBatchSummary,
-  SelectionStrategy,
-} from "@/types/annotations";
+import type { AnnotationPoolStatus, SelectionBatchSummary, SelectionStrategy } from "@/types/annotations";
 
 const coreSetAlgorithms = new Set<SelectionStrategy>([
   "moe",
@@ -39,11 +38,11 @@ const coreSetAlgorithms = new Set<SelectionStrategy>([
 ]);
 
 const poolStatusLabels: Record<AnnotationPoolStatus, string> = {
-  PENDING: "未标注池",
-  WAITING: "待标注池",
-  IN_PROGRESS: "领取中",
-  REVIEW_PENDING: "待复核池",
-  COMPLETED: "已完成池",
+  PENDING: `${annotationStatusLabelMap.PENDING}池`,
+  WAITING: `${annotationStatusLabelMap.WAITING}池`,
+  IN_PROGRESS: `${annotationStatusLabelMap.IN_PROGRESS}池`,
+  REVIEW_PENDING: `${annotationStatusLabelMap.REVIEW_PENDING}池`,
+  COMPLETED: `${annotationStatusLabelMap.COMPLETED}池`,
 };
 
 export function TrainingPage() {
@@ -287,7 +286,7 @@ export function TrainingPage() {
     { title: "状态", dataIndex: "status", render: statusTag },
     { title: "候选题数", dataIndex: "candidate_count" },
     { title: "选中题数", dataIndex: "selected_count" },
-    { title: "已入池", dataIndex: "moved_count" },
+    { title: "进入待标注池", dataIndex: "moved_count" },
   ];
 
   const selectionBatchColumns = [
@@ -300,6 +299,9 @@ export function TrainingPage() {
           <Typography.Text type="secondary">
             {formatBatchType(row.algorithm_code)} · {formatDateTime(row.created_at)}
           </Typography.Text>
+          {row.source_run_no ? (
+            <Typography.Text type="secondary">来源任务：{row.source_run_no}</Typography.Text>
+          ) : null}
         </Space>
       ),
     },
@@ -322,7 +324,7 @@ export function TrainingPage() {
             候选 {row.candidate_count} / 选中 {row.selected_count} / 请求 {row.requested_count}
           </Typography.Text>
           <Typography.Text type="secondary">
-            当前池中：未标注 {row.pending_count} · 待标注 {row.waiting_count} · 领取中 {row.in_progress_count}
+            当前池中：未标注 {row.pending_count} · 待标注 {row.waiting_count} · 标注中 {row.in_progress_count}
           </Typography.Text>
         </Space>
       ),
@@ -339,7 +341,7 @@ export function TrainingPage() {
             </Button>
             <Popconfirm
               title="撤回本批次选题"
-              description="会把本批次仍在领取中或待标注的题目回收到未标注池。"
+              description="会把本批次仍在标注中或待标注的题目回收到未标注池。"
               okText="确认撤回"
               cancelText="取消"
               disabled={disabled}
@@ -362,6 +364,11 @@ export function TrainingPage() {
       render: (_value: unknown, row: CoresetRun) => (
         <Space direction="vertical" size={0}>
           <Typography.Text strong>{row.run_no}</Typography.Text>
+          {row.recommendation_batch_no ? (
+            <Typography.Text type="secondary">
+              结果批次：{row.recommendation_batch_no}
+            </Typography.Text>
+          ) : null}
           <Typography.Text type="secondary">{formatDateTime(row.created_at)}</Typography.Text>
         </Space>
       ),
@@ -374,7 +381,7 @@ export function TrainingPage() {
           <Tag color="green">{formatAlgorithmLabel(row.strategy)}</Tag>
           <Typography.Text type="secondary">
             {row.update_mode === "incremental" ? "增量更新" : "全量选题"} ·{" "}
-            {row.data_scope === "pending" ? "未标注池" : "全部题目"}
+            {row.data_scope === "pending" ? "未标注池中的题目" : "全部题目"}
           </Typography.Text>
         </Space>
       ),
@@ -384,7 +391,7 @@ export function TrainingPage() {
       key: "status",
       render: (_value: unknown, row: CoresetRun) => (
         <Space direction="vertical" size={0}>
-          <Tag color={statusTagColor(row.status)}>{row.status}</Tag>
+          <Tag color={getRunStatusColor(row.status)}>{getRunStatusLabel(row.status)}</Tag>
           <Typography.Text type="secondary">
             {String(row.metrics_json?.progress_label ?? row.metrics_json?.phase ?? "-")}
           </Typography.Text>
@@ -397,7 +404,7 @@ export function TrainingPage() {
       render: (_value: unknown, row: CoresetRun) => (
         <Space direction="vertical" size={0}>
           <Typography.Text>
-            候选 {row.candidate_count} / 选中 {row.selected_count} / 入池 {row.moved_count}
+            候选 {row.candidate_count} / 选中 {row.selected_count} / 进入待标注池 {row.moved_count}
           </Typography.Text>
           <Typography.Text type="secondary">
             模式：{String(row.metrics_json?.selection_mode ?? "-")}
@@ -428,7 +435,7 @@ export function TrainingPage() {
           训练监控
         </Typography.Title>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          查看主动学习训练任务、模型版本、预测任务，以及按相同参数分组后的指标趋势，同时在这里统一查看题池治理与 CoreSet 历史任务。
+          查看主动学习训练任务、模型版本、预测任务，以及按相同参数分组后的指标趋势，同时在这里统一查看题池治理、状态回收与 CoreSet 历史任务。
         </Typography.Paragraph>
       </Card>
 
@@ -447,7 +454,7 @@ export function TrainingPage() {
           <SummaryCard title="训练样本" value={data?.completed_sample_count ?? 0} hint="可用于训练的已完成题目" loading={isLoading} />
         </Col>
         <Col xs={24} sm={12} xl={6}>
-          <SummaryCard title="未标注候选" value={data?.pending_candidate_count ?? 0} hint="当前未进入待标注池的题目" loading={isLoading} />
+          <SummaryCard title="未标注候选" value={data?.pending_candidate_count ?? 0} hint="当前还未进入待标注池的题目" loading={isLoading} />
         </Col>
         <Col xs={24} sm={12} xl={6}>
           <SummaryCard title="模型版本数" value={modelVersions.length} hint="已登记到系统的模型版本" loading={isLoading} />
@@ -461,12 +468,12 @@ export function TrainingPage() {
         extra={(
           <Popconfirm
             title="回收题池"
-            description="会把领取中的题目回收，并把待标注池中尚未开始的题目退回未标注池。"
+            description="会把标注中的题目回收，并把待标注池中尚未开始的题目退回未标注池。"
             okText="确认回收"
             cancelText="取消"
             onConfirm={() => void handleResetPools()}
           >
-            <Button loading={resetPoolsMutation.isPending}>回收领取中与待标注题目</Button>
+            <Button loading={resetPoolsMutation.isPending}>回收标注中与待标注题目</Button>
           </Popconfirm>
         )}
       >
@@ -610,14 +617,14 @@ export function TrainingPage() {
           <Space direction="vertical" size={16} style={{ width: "100%" }}>
             <Descriptions column={2} bordered size="small">
               <Descriptions.Item label="状态">
-                <Tag color={statusTagColor(selectedCoresetRun.status)}>{selectedCoresetRun.status}</Tag>
+                <Tag color={getRunStatusColor(selectedCoresetRun.status)}>{getRunStatusLabel(selectedCoresetRun.status)}</Tag>
               </Descriptions.Item>
               <Descriptions.Item label="运行阶段">
                 {String(selectedCoresetRun.metrics_json?.progress_label ?? selectedCoresetRun.metrics_json?.phase ?? "-")}
               </Descriptions.Item>
               <Descriptions.Item label="策略">{formatAlgorithmLabel(selectedCoresetRun.strategy)}</Descriptions.Item>
-              <Descriptions.Item label="候选范围">
-                {selectedCoresetRun.data_scope === "pending" ? "未标注池" : "全部题目"}
+              <Descriptions.Item label="候选题目范围">
+                {selectedCoresetRun.data_scope === "pending" ? "未标注池中的题目" : "全部题目"}
               </Descriptions.Item>
               <Descriptions.Item label="更新模式">
                 {selectedCoresetRun.update_mode === "incremental" ? "增量更新" : "全量选题"}
@@ -627,12 +634,20 @@ export function TrainingPage() {
               </Descriptions.Item>
               <Descriptions.Item label="请求数">{selectedCoresetRun.requested_count}</Descriptions.Item>
               <Descriptions.Item label="候选数">{selectedCoresetRun.candidate_count}</Descriptions.Item>
+              <Descriptions.Item label="当前未标注池">
+                {String(selectedCoresetRun.metrics_json?.current_pool_count ?? "-")}
+              </Descriptions.Item>
+              <Descriptions.Item label="较基线新增">
+                {String(selectedCoresetRun.metrics_json?.new_unlabeled_count ?? "-")}
+              </Descriptions.Item>
               <Descriptions.Item label="选中数">{selectedCoresetRun.selected_count}</Descriptions.Item>
-              <Descriptions.Item label="入池数">{selectedCoresetRun.moved_count}</Descriptions.Item>
+              <Descriptions.Item label="进入待标注池数量">{selectedCoresetRun.moved_count}</Descriptions.Item>
               <Descriptions.Item label="运行模式">
                 {String(selectedCoresetRun.metrics_json?.selection_mode ?? "-")}
               </Descriptions.Item>
-              <Descriptions.Item label="批次号">{selectedCoresetRun.batch_no ?? "-"}</Descriptions.Item>
+              <Descriptions.Item label="结果批次号">
+                {selectedCoresetRun.recommendation_batch_no ?? selectedCoresetRun.batch_no ?? "-"}
+              </Descriptions.Item>
               <Descriptions.Item label="历史锚点数">
                 {String(selectedCoresetRun.metrics_json?.anchor_count ?? "-")}
               </Descriptions.Item>
@@ -684,7 +699,7 @@ export function TrainingPage() {
                 onClick={() => openQuestionSelection(selectedCoresetRun.moved_question_ids, "WAITING")}
                 disabled={selectedCoresetRun.moved_question_ids.length <= 0}
               >
-                查看本次入池题目
+                查看本次进入待标注池的题目
               </Button>
             </Space>
           </Space>
@@ -819,19 +834,7 @@ function EpochTable({ epochs }: { epochs: TrainingEpoch[] }) {
 }
 
 function statusTag(status: string) {
-  const colors: Record<string, string> = {
-    PENDING: "default",
-    RUNNING: "blue",
-    SUCCESS: "green",
-    FAILED: "red",
-  };
-  const labels: Record<string, string> = {
-    PENDING: "待执行",
-    RUNNING: "运行中",
-    SUCCESS: "成功",
-    FAILED: "失败",
-  };
-  return <Tag color={colors[status] ?? "default"}>{labels[status] ?? status}</Tag>;
+  return <Tag color={getRunStatusColor(status)}>{getRunStatusLabel(status)}</Tag>;
 }
 
 function metricText(value?: number | null) {
@@ -949,16 +952,4 @@ function formatAlgorithmLabel(value: string) {
 
 function formatBatchType(value: string) {
   return coreSetAlgorithms.has(value as SelectionStrategy) ? "CoreSet 选题" : "低置信度选题";
-}
-
-function formatDateTime(value?: string | null) {
-  if (!value) return "-";
-  return value.replace("T", " ").slice(0, 19);
-}
-
-function statusTagColor(status: string) {
-  if (status === "SUCCESS") return "green";
-  if (status === "FAILED") return "red";
-  if (status === "RUNNING") return "processing";
-  return "default";
 }

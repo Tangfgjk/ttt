@@ -7,6 +7,8 @@ import {
   Col,
   Empty,
   Form,
+  Input,
+  Modal,
   Progress,
   Row,
   Select,
@@ -18,9 +20,16 @@ import {
   Upload,
   message,
 } from "antd";
+import { EyeOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 
 import { usePageHashScroll } from "@/app/use-page-hash-scroll";
+import {
+  getImportBatchStatusColor,
+  getImportBatchStatusLabel,
+  getImportParseStatusColor,
+  getImportParseStatusLabel,
+} from "@/constants/import-status";
 import {
   useImportBatchDetail,
   useImportBatchRecords,
@@ -93,11 +102,7 @@ const batchColumns = [
     title: "状态",
     dataIndex: "import_status",
     width: 160,
-    render: (value: string) => {
-      const color =
-        value === "SUCCESS" ? "green" : value === "FAILED" ? "red" : value === "PARTIAL_SUCCESS" ? "gold" : "blue";
-      return <Tag color={color}>{value}</Tag>;
-    },
+    render: (value: string) => <Tag color={getImportBatchStatusColor(value)}>{getImportBatchStatusLabel(value)}</Tag>,
   },
   {
     title: "总记录",
@@ -126,19 +131,7 @@ const recordColumns = [
     title: "归一化结果",
     dataIndex: "parse_status",
     width: 220,
-    render: (value: string) => {
-      const colorMap: Record<string, string> = {
-        CREATED_NEW_QUESTION: "green",
-        MATCHED_BY_EXTERNAL_ID: "blue",
-        MATCHED_BY_CONTENT_HASH: "cyan",
-        MATCHED_BY_REVIEW: "purple",
-        CREATED_BY_REVIEW: "lime",
-        PENDING_REVIEW: "gold",
-        FAILED: "red",
-        RAW_IMPORTED: "default",
-      };
-      return <Tag color={colorMap[value] ?? "default"}>{value}</Tag>;
-    },
+    render: (value: string) => <Tag color={getImportParseStatusColor(value)}>{getImportParseStatusLabel(value)}</Tag>,
   },
   {
     title: "题目 ID",
@@ -273,12 +266,16 @@ export function ImportsPage() {
   const [batchPageSize, setBatchPageSize] = useState(DEFAULT_IMPORT_PAGE_SIZE);
   const [recordPage, setRecordPage] = useState(1);
   const [recordPageSize, setRecordPageSize] = useState(DEFAULT_IMPORT_PAGE_SIZE);
+  const [previewRecord, setPreviewRecord] = useState<ImportSourceRecord | null>(null);
+  const [recordQuestionIdInput, setRecordQuestionIdInput] = useState("");
+  const [recordQuestionIdFilter, setRecordQuestionIdFilter] = useState<number | undefined>(undefined);
   const dataSourceCode = Form.useWatch("data_source_code", form) as string | undefined;
 
   const batches = data ?? [];
   const detailQuery = useImportBatchDetail(selectedBatchId);
   const detail = detailQuery.data;
   const detailRecordsQuery = useImportBatchRecords(selectedBatchId, {
+    normalized_question_id: recordQuestionIdFilter,
     page: recordPage,
     page_size: recordPageSize,
   });
@@ -300,6 +297,11 @@ export function ImportsPage() {
 
   useEffect(() => {
     setRecordPage(1);
+  }, [selectedBatchId]);
+
+  useEffect(() => {
+    setRecordQuestionIdInput("");
+    setRecordQuestionIdFilter(undefined);
   }, [selectedBatchId]);
 
   const totalRecords = useMemo(
@@ -427,6 +429,26 @@ export function ImportsPage() {
     initializeFolderUploadMutation.isPending ||
     uploadBatchChunkMutation.isPending ||
     importProgress !== null;
+  const recordColumnsWithActions = useMemo(
+    () => [
+      ...recordColumns,
+      {
+        title: "操作",
+        key: "actions",
+        width: 120,
+        fixed: "right" as const,
+        render: (_: unknown, record: ImportSourceRecord) => (
+          <Button
+            icon={<EyeOutlined />}
+            onClick={() => setPreviewRecord(record)}
+          >
+            原始 JSON
+          </Button>
+        ),
+      },
+    ],
+    [],
+  );
 
   const handleFolderSelection = (event: ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = Array.from(event.target.files ?? []);
@@ -592,6 +614,28 @@ export function ImportsPage() {
         error instanceof Error ? error.message : "上传失败，请查看后端日志。";
       message.error(detailMessage);
     }
+  };
+
+  const handleSearchRecordByQuestionId = () => {
+    const normalizedValue = recordQuestionIdInput.trim();
+    if (!normalizedValue) {
+      setRecordPage(1);
+      setRecordQuestionIdFilter(undefined);
+      return;
+    }
+    const nextQuestionId = Number(normalizedValue);
+    if (!Number.isInteger(nextQuestionId) || nextQuestionId <= 0) {
+      message.warning("请输入有效的题目 ID");
+      return;
+    }
+    setRecordPage(1);
+    setRecordQuestionIdFilter(nextQuestionId);
+  };
+
+  const handleResetRecordQuestionIdSearch = () => {
+    setRecordQuestionIdInput("");
+    setRecordPage(1);
+    setRecordQuestionIdFilter(undefined);
   };
 
   return (
@@ -840,9 +884,28 @@ export function ImportsPage() {
               </Col>
             </Row>
 
+            <Space wrap>
+              <Input
+                style={{ width: 240 }}
+                placeholder="按题目 ID 搜索原始数据"
+                value={recordQuestionIdInput}
+                onChange={(event: ChangeEvent<HTMLInputElement>) => setRecordQuestionIdInput(event.target.value)}
+                onPressEnter={handleSearchRecordByQuestionId}
+              />
+              <Button type="primary" onClick={handleSearchRecordByQuestionId}>
+                搜索原始数据
+              </Button>
+              <Button onClick={handleResetRecordQuestionIdSearch}>重置</Button>
+              {recordQuestionIdFilter ? (
+                <Typography.Text type="secondary">
+                  当前筛选题目 ID：{recordQuestionIdFilter}
+                </Typography.Text>
+              ) : null}
+            </Space>
+
             <Table<ImportSourceRecord>
               rowKey="id"
-              columns={recordColumns}
+              columns={recordColumnsWithActions}
               loading={detailRecordsQuery.isLoading}
               dataSource={detailRecordsQuery.data?.items ?? []}
               pagination={{
@@ -862,6 +925,56 @@ export function ImportsPage() {
           </Space>
         )}
       </Card>
+      <Modal
+        title={previewRecord ? `原始 JSON：${previewRecord.source_record_key}` : "原始 JSON"}
+        open={previewRecord !== null}
+        onCancel={() => setPreviewRecord(null)}
+        footer={
+          <Space>
+            <Button
+              onClick={() => {
+                if (!previewRecord?.raw_payload) {
+                  message.warning("当前记录没有可展示的原始 JSON");
+                  return;
+                }
+                void navigator.clipboard
+                  .writeText(JSON.stringify(previewRecord.raw_payload, null, 2))
+                  .then(() => message.success("原始 JSON 已复制"))
+                  .catch(() => message.error("复制失败，请手动复制"));
+              }}
+            >
+              复制 JSON
+            </Button>
+            <Button type="primary" onClick={() => setPreviewRecord(null)}>
+              关闭
+            </Button>
+          </Space>
+        }
+        width={920}
+      >
+        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+          <Typography.Text type="secondary">
+            当前记录状态：{previewRecord ? getImportParseStatusLabel(previewRecord.parse_status) : "-"}
+          </Typography.Text>
+          <pre
+            style={{
+              margin: 0,
+              maxHeight: 520,
+              overflow: "auto",
+              padding: 16,
+              borderRadius: 8,
+              background: "#f6f8fa",
+              border: "1px solid rgba(23, 37, 47, 0.08)",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+            }}
+          >
+            {previewRecord?.raw_payload
+              ? JSON.stringify(previewRecord.raw_payload, null, 2)
+              : "当前记录没有可展示的原始 JSON"}
+          </pre>
+        </Space>
+      </Modal>
     </Space>
   );
 }

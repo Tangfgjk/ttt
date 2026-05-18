@@ -36,6 +36,7 @@ async def get_import_batch_detail(
 async def list_import_batch_records(
     batch_id: int,
     parse_status: str | None = Query(default=None),
+    normalized_question_id: int | None = Query(default=None, ge=1),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -44,6 +45,7 @@ async def list_import_batch_records(
     return service.list_batch_source_records(
         batch_id,
         parse_status=parse_status,
+        normalized_question_id=normalized_question_id,
         page=page,
         page_size=page_size,
     )

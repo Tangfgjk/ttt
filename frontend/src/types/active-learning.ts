@@ -186,6 +186,8 @@ export type CoresetIncrementalSummary = {
   baseline_strategy?: CoresetStrategy | null;
   baseline_finished_at?: string | null;
   baseline_selected_count: number;
+  current_pool_count: number;
+  new_unlabeled_count: number;
   incremental_candidate_count: number;
   anchor_count: number;
   snapshot_created_before?: string | null;
@@ -226,6 +228,7 @@ export type ActiveLearningOverviewResponse = {
   prediction_runs: PredictionRun[];
   coreset_runs: CoresetRun[];
   coreset_incremental?: CoresetIncrementalSummary | null;
+  coreset_incremental_by_strategy?: Record<string, CoresetIncrementalSummary>;
   trend_groups: TrendGroup[];
   completed_sample_count: number;
   pending_candidate_count: number;

@@ -69,6 +69,11 @@ class QuestionCatalogOut(BaseModel):
     school_code: str | None = None
 
 
+class DifficultyLevelStatOut(BaseModel):
+    level: int
+    question_count: int
+
+
 class QuestionListItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -97,6 +102,7 @@ class QuestionDetailResponse(BaseModel):
 
     id: int
     difficulty_level: int | None = None
+    source_difficulty_level: int | None = None
     blank_count: int
     has_subquestions: bool
     source_status: str
@@ -111,3 +117,4 @@ class QuestionDetailResponse(BaseModel):
     external_refs: list[ExternalRefOut]
     knowledge_points: list[QuestionKnowledgePointOut]
     catalogs: list[QuestionCatalogOut]
+    difficulty_level_stats: list[DifficultyLevelStatOut] = []

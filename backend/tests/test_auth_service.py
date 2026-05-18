@@ -3,6 +3,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.base import Base
+from app.schemas.auth import RegisterRequest
 from app.services.auth_service import AuthService
 
 
@@ -35,3 +36,39 @@ def test_login_rejects_wrong_password() -> None:
         assert exc.detail == "用户名或密码错误"
     else:
         raise AssertionError("Expected wrong-password login to fail.")
+
+
+def test_register_creates_annotator_user() -> None:
+    db = _build_session()
+    service = AuthService(db)
+
+    session = service.register(
+        RegisterRequest(
+            username="新标注员1",
+            password="annotator123",
+            confirm_password="annotator123",
+        )
+    )
+
+    assert session.username == "新标注员1"
+    assert session.role == "annotator"
+    assert session.training_scope == "none"
+
+
+def test_register_rejects_reserved_username() -> None:
+    db = _build_session()
+    service = AuthService(db)
+
+    try:
+        service.register(
+            RegisterRequest(
+                username="admin",
+                password="annotator123",
+                confirm_password="annotator123",
+            )
+        )
+    except HTTPException as exc:
+        assert exc.status_code == 422
+        assert exc.detail == "该用户名为系统保留名称，请更换后再试"
+    else:
+        raise AssertionError("Expected reserved username registration to fail.")

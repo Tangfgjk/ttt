@@ -4,6 +4,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.repositories.question_repository import QuestionFilters, QuestionRepository
+from app.schemas.question import DifficultyLevelStatOut
 
 
 class QuestionService:
@@ -20,4 +21,9 @@ class QuestionService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Question {question_id} not found.",
             )
-        return question
+        source_difficulty_level = self.repository.get_source_difficulty_level(question_id)
+        difficulty_level_stats = [
+            DifficultyLevelStatOut(level=level, question_count=question_count)
+            for level, question_count in self.repository.list_difficulty_level_stats()
+        ]
+        return question, source_difficulty_level, difficulty_level_stats

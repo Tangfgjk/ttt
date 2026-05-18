@@ -13,6 +13,21 @@ export function RequireAuth() {
   return <Outlet />;
 }
 
+export function PublicOnly() {
+  const session = useAuthStore((state) => state.session);
+
+  if (!session) {
+    return <Outlet />;
+  }
+
+  const trainingScope = session.trainingScope ?? "none";
+  if (session.role === "annotator" && trainingScope === "none") {
+    return <Navigate to="/annotator-training" replace />;
+  }
+
+  return <Navigate to={session.role === "admin" ? "/admin/overview" : "/workspace"} replace />;
+}
+
 export function RequireRole({ allowedRoles }: { allowedRoles: UserRole[] }) {
   const session = useAuthStore((state) => state.session);
 

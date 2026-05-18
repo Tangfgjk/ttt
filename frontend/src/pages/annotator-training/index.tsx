@@ -29,6 +29,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
+import { formatBackendDateTime } from "@/app/date-time";
 import { useAuthStore } from "@/app/store/auth-store";
 import { CompetencyHelpPopover } from "@/components/competency-help-popover";
 import { QuestionRichText } from "@/components/question-rich-text";
@@ -117,7 +118,7 @@ function mergeAttemptAnswers(
 }
 
 function formatAttemptTime(value: string) {
-  return new Date(value).toLocaleString("zh-CN", { hour12: false });
+  return formatBackendDateTime(value);
 }
 
 export function AnnotatorTrainingPage() {

@@ -16,6 +16,7 @@ import {
   Progress,
   Row,
   Select,
+  Segmented,
   Space,
   Statistic,
   Switch,
@@ -26,11 +27,23 @@ import {
   theme,
 } from "antd";
 import type { AxiosError } from "axios";
-import { useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { useNavigate } from "react-router-dom";
 
+import { formatBackendDateTime as formatDateTime } from "@/app/date-time";
 import { usePageHashScroll } from "@/app/use-page-hash-scroll";
 import { useAuthStore } from "@/app/store/auth-store";
+import {
+  annotationStatusColorMap,
+  annotationStatusLabelMap,
+} from "@/constants/annotation-status";
+import { getRunStatusColor, getRunStatusLabel } from "@/constants/run-status";
 import {
   useActiveLearningOverview,
   useCancelCoresetRun,
@@ -42,11 +55,13 @@ import {
   useTrainingRunLogs,
 } from "@/modules/active-learning/hooks";
 import {
+  useAnnotationPolicy,
   useAnnotationPoolSummary,
   useResetAnnotationPools,
   useRollbackSelectionBatch,
   useSelectionBatches,
   useSelectionStrategies,
+  useUpdateAnnotationPolicy,
 } from "@/modules/annotations/hooks";
 import type {
   ActiveLearningStage,
@@ -57,6 +72,8 @@ import type {
   TrainingRun,
 } from "@/types/active-learning";
 import type {
+  AnnotatorCount,
+  AnnotationPolicySyncStatus,
   AnnotationPoolStatus,
   SelectionBatchSummary,
   SelectionDataScope,
@@ -70,11 +87,11 @@ const poolStatusItems: Array<{
   label: string;
   color: string;
 }> = [
-  { status: "PENDING", label: "未标注池", color: "blue" },
-  { status: "WAITING", label: "待标注池", color: "gold" },
-  { status: "IN_PROGRESS", label: "领取锁定池", color: "purple" },
-  { status: "REVIEW_PENDING", label: "待复核池", color: "orange" },
-  { status: "COMPLETED", label: "已标注池", color: "green" },
+  { status: "PENDING", label: `${annotationStatusLabelMap.PENDING}池`, color: annotationStatusColorMap.PENDING },
+  { status: "WAITING", label: `${annotationStatusLabelMap.WAITING}池`, color: annotationStatusColorMap.WAITING },
+  { status: "IN_PROGRESS", label: `${annotationStatusLabelMap.IN_PROGRESS}池`, color: annotationStatusColorMap.IN_PROGRESS },
+  { status: "REVIEW_PENDING", label: `${annotationStatusLabelMap.REVIEW_PENDING}池`, color: annotationStatusColorMap.REVIEW_PENDING },
+  { status: "COMPLETED", label: `${annotationStatusLabelMap.COMPLETED}池`, color: annotationStatusColorMap.COMPLETED },
 ];
 
 const coreSetAlgorithms = new Set<SelectionStrategy>([
@@ -115,8 +132,12 @@ export function AdminPage() {
   const [selectedCoresetRun, setSelectedCoresetRun] = useState<CoresetRun | null>(
     null,
   );
+  const trainingCardRef = useRef<HTMLDivElement | null>(null);
+  const predictionCardRef = useRef<HTMLDivElement | null>(null);
+  const [trainingCardHeight, setTrainingCardHeight] = useState<number | undefined>();
 
   const { data: activeLearning } = useActiveLearningOverview();
+  const { data: annotationPolicy } = useAnnotationPolicy();
   const {
     data: poolSummary,
     isLoading: isPoolSummaryLoading,
@@ -133,11 +154,11 @@ export function AdminPage() {
   const cancelCoresetMutation = useCancelCoresetRun();
   const resetPoolsMutation = useResetAnnotationPools();
   const rollbackSelectionBatchMutation = useRollbackSelectionBatch();
+  const updateAnnotationPolicyMutation = useUpdateAnnotationPolicy();
 
   const latestTrainingRun = latestRun(activeLearning?.training_runs);
   const latestPredictionRun = latestRun(activeLearning?.prediction_runs);
   const latestCoresetRun = latestRun(activeLearning?.coreset_runs);
-  const incrementalSummary = activeLearning?.coreset_incremental ?? null;
   const latestCoreSetResult =
     latestCoresetRun?.status === "SUCCESS" ? latestCoresetRun : null;
 
@@ -153,11 +174,57 @@ export function AdminPage() {
 
   const minimumTrainingSamples =
     Form.useWatch("min_train_samples", trainingForm) ?? 5;
+  const coresetStrategy = Form.useWatch("strategy", coresetForm) ?? "kmeans";
   const coresetDataScope = Form.useWatch("data_scope", coresetForm) ?? "pending";
+  const incrementalSummary =
+    activeLearning?.coreset_incremental_by_strategy?.[coresetStrategy] ??
+    activeLearning?.coreset_incremental ??
+    null;
+  const canRunIncrementalForSelectedStrategy =
+    Boolean(incrementalSummary?.can_run_incremental) &&
+    incrementalSummary?.baseline_strategy === coresetStrategy;
+  const hasNewUnlabeledSinceBaseline =
+    canRunIncrementalForSelectedStrategy &&
+    (incrementalSummary?.new_unlabeled_count ?? 0) > 0;
   const { data: latestTrainingLog } = useTrainingRunLogs(
     latestTrainingRun?.id,
     Boolean(latestTrainingRun),
   );
+
+  const updateTrainingCardHeight = useCallback(() => {
+    const trainingCard = trainingCardRef.current;
+    const predictionCard = predictionCardRef.current;
+    if (!trainingCard || !predictionCard) return;
+
+    if (!window.matchMedia("(min-width: 1200px)").matches) {
+      setTrainingCardHeight(undefined);
+      return;
+    }
+
+    const trainingTop = trainingCard.getBoundingClientRect().top;
+    const predictionBottom = predictionCard.getBoundingClientRect().bottom;
+    const nextHeight = Math.max(420, Math.round(predictionBottom - trainingTop));
+    setTrainingCardHeight((previous) =>
+      previous === undefined || Math.abs(previous - nextHeight) > 1
+        ? nextHeight
+        : previous,
+    );
+  }, []);
+
+  useLayoutEffect(() => {
+    updateTrainingCardHeight();
+
+    const resizeObserver = new ResizeObserver(updateTrainingCardHeight);
+    if (predictionCardRef.current) {
+      resizeObserver.observe(predictionCardRef.current);
+    }
+    window.addEventListener("resize", updateTrainingCardHeight);
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", updateTrainingCardHeight);
+    };
+  }, [activeLearning, latestTrainingLog, updateTrainingCardHeight]);
 
   const versionOptions = (activeLearning?.model_versions ?? []).map((item) => ({
     value: item.id,
@@ -177,6 +244,9 @@ export function AdminPage() {
       poolSummary?.items.find((summaryItem) => summaryItem.status === item.status)
         ?.count ?? 0,
   }));
+
+  const currentAnnotatorCount = annotationPolicy?.annotator_count ?? 3;
+  const policySyncStatus = annotationPolicy?.sync_status;
 
   useEffect(() => {
     trainingForm.setFieldValue("include_gold_labels", includeGoldLabels);
@@ -298,7 +368,7 @@ export function AdminPage() {
       admin_user_id: session.id,
     });
     message.success(
-      `题池已回收：回收领取中 ${result.recalled_in_progress_count} 题，回收待标注 ${result.returned_waiting_count} 题。`,
+      `题池已回收：回收标注中 ${result.recalled_in_progress_count} 题，回收待标注 ${result.returned_waiting_count} 题。`,
     );
   };
 
@@ -309,8 +379,31 @@ export function AdminPage() {
       payload: { admin_user_id: session.id },
     });
     message.success(
-      `已撤回批次 ${result.batch_no}：回收领取中 ${result.recalled_in_progress_count} 题，退回待标注 ${result.returned_waiting_count} 题。`,
+      `已撤回批次 ${result.batch_no}：回收标注中 ${result.recalled_in_progress_count} 题，退回待标注 ${result.returned_waiting_count} 题。`,
     );
+  };
+
+  const scrollToSection = (sectionId: string) => {
+    const target = document.getElementById(sectionId);
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    window.history.replaceState(null, "", `#${sectionId}`);
+  };
+
+  const handleAnnotatorCountChange = async (value: string | number) => {
+    if (!session) return;
+    const annotatorCount = Number(value) as AnnotatorCount;
+    try {
+      const result = await updateAnnotationPolicyMutation.mutateAsync({
+        admin_user_id: session.id,
+        annotator_count: annotatorCount,
+      });
+      message.success(
+        `已切换为 ${result.annotator_count} 人标注策略，${result.affected_question_count} 道未开工题目正在后台同步。`,
+      );
+    } catch (error) {
+      message.error(getRequestErrorMessage(error, "更新标注策略失败"));
+    }
   };
 
   const openQuestionSelection = (
@@ -339,6 +432,9 @@ export function AdminPage() {
           <Typography.Text type="secondary">
             {formatBatchType(row.algorithm_code)} · {formatDateTime(row.created_at)}
           </Typography.Text>
+          {row.source_run_no ? (
+            <Typography.Text type="secondary">来源任务：{row.source_run_no}</Typography.Text>
+          ) : null}
         </Space>
       ),
     },
@@ -361,7 +457,7 @@ export function AdminPage() {
             候选 {row.candidate_count} / 选中 {row.selected_count} / 请求 {row.requested_count}
           </Typography.Text>
           <Typography.Text type="secondary">
-            当前池中：未标注 {row.pending_count} · 待标注 {row.waiting_count} · 领取中{" "}
+            当前池中：未标注 {row.pending_count} · 待标注 {row.waiting_count} · 标注中{" "}
             {row.in_progress_count}
           </Typography.Text>
         </Space>
@@ -384,7 +480,7 @@ export function AdminPage() {
             </Button>
             <Popconfirm
               title="撤回本次选题"
-              description="会把本批次仍在领取中或待标注的题目回收到未标注池。"
+              description="会把本批次仍在标注中或待标注的题目回收到未标注池。"
               okText="确认撤回"
               cancelText="取消"
               disabled={disabled}
@@ -411,6 +507,11 @@ export function AdminPage() {
       render: (_value: unknown, row: CoresetRun) => (
         <Space direction="vertical" size={0}>
           <Typography.Text strong>{row.run_no}</Typography.Text>
+          {row.recommendation_batch_no ? (
+            <Typography.Text type="secondary">
+              结果批次：{row.recommendation_batch_no}
+            </Typography.Text>
+          ) : null}
           <Typography.Text type="secondary">
             {formatDateTime(row.created_at)}
           </Typography.Text>
@@ -425,7 +526,7 @@ export function AdminPage() {
           <Tag color="green">{formatAlgorithmLabel(row.strategy)}</Tag>
           <Typography.Text type="secondary">
             {row.update_mode === "incremental" ? "增量更新" : "全量选题"} ·{" "}
-            {row.data_scope === "pending" ? "未标注池" : "全部题目"}
+            {row.data_scope === "pending" ? "未标注池中的题目" : "全部题目"}
           </Typography.Text>
         </Space>
       ),
@@ -435,7 +536,7 @@ export function AdminPage() {
       key: "status",
       render: (_value: unknown, row: CoresetRun) => (
         <Space direction="vertical" size={0}>
-          <Tag color={statusTagColor(row.status)}>{row.status}</Tag>
+          <Tag color={getRunStatusColor(row.status)}>{getRunStatusLabel(row.status)}</Tag>
           <Typography.Text type="secondary">
             {String(row.metrics_json?.progress_label ?? row.metrics_json?.phase ?? "-")}
           </Typography.Text>
@@ -448,7 +549,7 @@ export function AdminPage() {
       render: (_value: unknown, row: CoresetRun) => (
         <Space direction="vertical" size={0}>
           <Typography.Text>
-            候选 {row.candidate_count} / 选中 {row.selected_count} / 入池 {row.moved_count}
+            候选 {row.candidate_count} / 选中 {row.selected_count} / 进入待标注池 {row.moved_count}
           </Typography.Text>
           <Typography.Text type="secondary">
             模式：{String(row.metrics_json?.selection_mode ?? "-")}
@@ -491,7 +592,7 @@ export function AdminPage() {
                 管理后台
               </Typography.Title>
               <Typography.Text type="secondary">
-                主动学习闭环操作台：训练模型、低置信度选题、CoreSet 选题，以及题池治理与批次撤回。
+                主动学习闭环操作台：训练模型、低置信度选题、CoreSet 选题，以及题池治理、批次撤回与状态回收。
               </Typography.Text>
             </Space>
           </Col>
@@ -508,6 +609,98 @@ export function AdminPage() {
             </Space>
           </Col>
         </Row>
+      </Card>
+
+      <Card
+        size="small"
+        style={{ boxShadow: token.boxShadowTertiary }}
+        bodyStyle={{ paddingBlock: 12 }}
+      >
+        <Space size={[8, 8]} wrap>
+          {[
+            { id: "admin-policy", label: "标注策略" },
+            { id: "admin-pools", label: "题池治理" },
+            { id: "admin-coreset", label: "CoreSet" },
+            { id: "admin-training", label: "训练模型" },
+            { id: "admin-prediction", label: "低置信度预测" },
+          ].map((item) => (
+            <Button key={item.id} onClick={() => scrollToSection(item.id)}>
+              {item.label}
+            </Button>
+          ))}
+        </Space>
+      </Card>
+
+      <Card
+        id="admin-policy"
+        className="page-section-anchor"
+        title="标注策略控制台"
+        extra={
+          <Tag
+            color={
+              currentAnnotatorCount === 1
+                ? "green"
+                : currentAnnotatorCount === 2
+                  ? "blue"
+                  : "purple"
+            }
+          >
+            {currentAnnotatorCount} 人模式
+          </Tag>
+        }
+        style={{ boxShadow: token.boxShadowTertiary }}
+      >
+        <Space direction="vertical" size={16} style={{ width: "100%" }}>
+          <Alert
+            type="info"
+            showIcon
+            message={
+              annotationPolicy?.strategy_description ??
+              "三人独立标注，按多数聚合；存在争议时进入复核。"
+            }
+            description="该配置会用于后续进入待标注池的题目，并同步到当前尚未开始的待标注题和未标注题。"
+          />
+          {policySyncStatus ? (
+            <Alert
+              showIcon
+              type={annotationPolicySyncAlertType(policySyncStatus.status)}
+              message={annotationPolicySyncMessage(policySyncStatus)}
+              description={annotationPolicySyncDescription(policySyncStatus)}
+            />
+          ) : null}
+          <Row gutter={[16, 16]} align="middle">
+            <Col xs={24} lg={14}>
+              <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                <Typography.Text strong>标注人数</Typography.Text>
+                <Segmented
+                  block
+                  options={[
+                    { label: "1 人", value: 1 },
+                    { label: "2 人", value: 2 },
+                    { label: "3 人", value: 3 },
+                  ]}
+                  value={currentAnnotatorCount}
+                  onChange={(value: string | number) =>
+                    void handleAnnotatorCountChange(value)
+                  }
+                  disabled={updateAnnotationPolicyMutation.isPending}
+                />
+              </Space>
+            </Col>
+            <Col xs={24} lg={10}>
+              <Space direction="vertical" size={6}>
+                <Typography.Text>当前要求人数：{currentAnnotatorCount}</Typography.Text>
+                <Typography.Text type="secondary">
+                  {currentAnnotatorCount === 1
+                    ? "标注员提交后直接形成最终结果，不创建复核任务。"
+                    : currentAnnotatorCount === 2
+                      ? "两位标注员一致则自动完成；不一致时进入复核队列。"
+                      : "三位标注员提交后按多数聚合；无法收敛的维度进入复核。"}
+                </Typography.Text>
+              </Space>
+            </Col>
+          </Row>
+        </Space>
       </Card>
 
       <Row gutter={[16, 16]}>
@@ -530,31 +723,33 @@ export function AdminPage() {
                 value={item.count}
                 valueStyle={{ color: statusColor(item.color, token) }}
               />
-              <Typography.Text type="secondary">点击查看题池明细</Typography.Text>
+              <Typography.Text type="secondary">点击查看该状态下的题目</Typography.Text>
             </Card>
           </Col>
         ))}
       </Row>
 
       <Card
+        id="admin-pools"
+        className="page-section-anchor"
         title="题池治理"
         extra={
           <Popconfirm
             title="回收题池"
-            description="会把领取中的题目回收，并把待标注池中未开始的题目退回未标注池。"
+            description="会把标注中的题目回收，并把待标注池中未开始的题目退回未标注池。"
             okText="确认回收"
             cancelText="取消"
             onConfirm={() => void handleResetPools()}
           >
             <Button loading={resetPoolsMutation.isPending}>
-              回收领取中与待标注题目
+              回收标注中与待标注题目
             </Button>
           </Popconfirm>
         }
       >
         <Space direction="vertical" size={14} style={{ width: "100%" }}>
           <Typography.Text type="secondary">
-            这里集中查看 CoreSet / 低置信度选题批次，并支持按批次撤回。
+            这里集中查看 CoreSet / 低置信度选题批次，并支持按批次撤回，以及回收标注中和待标注的题目。
           </Typography.Text>
           <Table<SelectionBatchSummary>
             rowKey="id"
@@ -567,7 +762,11 @@ export function AdminPage() {
         </Space>
       </Card>
 
-      <Card title="CoreSet 历史任务">
+      <Card
+        id="admin-coreset"
+        className="page-section-anchor"
+        title="CoreSet 历史任务"
+      >
         <Table<CoresetRun>
           rowKey="id"
           size="small"
@@ -580,34 +779,53 @@ export function AdminPage() {
 
       <Row gutter={[16, 16]} align="stretch">
         <Col xs={24} xl={14}>
-          <Card
-            id="admin-training"
-            className="page-section-anchor"
-            style={{ height: "100%", boxShadow: token.boxShadowTertiary }}
-            title={
-              <Space>
-                <RobotOutlined style={{ color: token.colorPrimary }} />
-                <span>训练模型</span>
-              </Space>
-            }
-            extra={<Tag color="processing">预测头训练</Tag>}
+          <div
+            ref={trainingCardRef}
+            style={trainingCardHeight ? { height: trainingCardHeight } : undefined}
           >
-            <Space size={8} wrap style={{ marginBottom: 16 }}>
-              <Tag color="blue">
-                可训练样本数：{activeLearning?.completed_sample_count ?? 0}
-              </Tag>
-              <Tag
-                color={
-                  (activeLearning?.completed_sample_count ?? 0) >= minimumTrainingSamples
-                    ? "green"
-                    : "red"
-                }
-              >
-                最小样本数：{minimumTrainingSamples}
-              </Tag>
-            </Space>
+            <Card
+              id="admin-training"
+              className="page-section-anchor"
+              style={{
+                height: trainingCardHeight ? "100%" : undefined,
+                boxShadow: token.boxShadowTertiary,
+                display: trainingCardHeight ? "flex" : undefined,
+                flexDirection: trainingCardHeight ? "column" : undefined,
+              }}
+              bodyStyle={
+                trainingCardHeight
+                  ? {
+                      flex: 1,
+                      display: "flex",
+                      flexDirection: "column",
+                      minHeight: 0,
+                    }
+                  : undefined
+              }
+              title={
+                <Space>
+                  <RobotOutlined style={{ color: token.colorPrimary }} />
+                  <span>训练模型</span>
+                </Space>
+              }
+              extra={<Tag color="processing">预测头训练</Tag>}
+            >
+              <Space size={8} wrap style={{ marginBottom: 16 }}>
+                <Tag color="blue">
+                  可训练样本数：{activeLearning?.completed_sample_count ?? 0}
+                </Tag>
+                <Tag
+                  color={
+                    (activeLearning?.completed_sample_count ?? 0) >= minimumTrainingSamples
+                      ? "green"
+                      : "red"
+                  }
+                >
+                  最小样本数：{minimumTrainingSamples}
+                </Tag>
+              </Space>
 
-            <Form
+              <Form
               form={trainingForm}
               layout="vertical"
               requiredMark={false}
@@ -745,23 +963,25 @@ export function AdminPage() {
                   </Button>
                 </Col>
               </Row>
-            </Form>
+              </Form>
 
-            <ProgressPanel
-              title="训练进度"
-              progress={trainingProgress.percent}
-              status={trainingProgress.status}
-              statusText={trainingProgress.text}
-              detail={trainingProgress.detail}
-            />
+              <ProgressPanel
+                title="训练进度"
+                progress={trainingProgress.percent}
+                status={trainingProgress.status}
+                statusText={trainingProgress.text}
+                detail={trainingProgress.detail}
+              />
 
-            <TrainingConsolePanel
-              logs={latestTrainingLog?.log_text ?? ""}
-              stderr={latestTrainingLog?.stderr_text ?? ""}
-              isActive={isTrainingActive}
-              isTruncated={latestTrainingLog?.is_truncated ?? false}
-            />
-          </Card>
+              <TrainingConsolePanel
+                logs={latestTrainingLog?.log_text ?? ""}
+                stderr={latestTrainingLog?.stderr_text ?? ""}
+                isActive={isTrainingActive}
+                isTruncated={latestTrainingLog?.is_truncated ?? false}
+                fillAvailableHeight={Boolean(trainingCardHeight)}
+              />
+            </Card>
+          </div>
         </Col>
 
         <Col xs={24} xl={10}>
@@ -771,18 +991,19 @@ export function AdminPage() {
             size={16}
             style={{ width: "100%" }}
           >
-            <Card
-              id="admin-prediction"
-              className="page-section-anchor"
-              style={{ boxShadow: token.boxShadowTertiary }}
-              title={
-                <Space>
-                  <ThunderboltOutlined style={{ color: token.colorWarning }} />
-                  <span>低置信度预测选题</span>
-                </Space>
-              }
-              extra={<Tag color="orange">模型驱动</Tag>}
-            >
+            <div ref={predictionCardRef}>
+              <Card
+                id="admin-prediction"
+                className="page-section-anchor"
+                style={{ boxShadow: token.boxShadowTertiary }}
+                title={
+                  <Space>
+                    <ThunderboltOutlined style={{ color: token.colorWarning }} />
+                    <span>低置信度预测选题</span>
+                  </Space>
+                }
+                extra={<Tag color="orange">模型驱动</Tag>}
+              >
               <Form
                 form={predictionForm}
                 layout="vertical"
@@ -842,7 +1063,7 @@ export function AdminPage() {
                   </Col>
                   <Col xs={24}>
                     <Form.Item
-                      label="加入待标注池"
+                      label="进入待标注池"
                       name="auto_move_to_waiting"
                       valuePropName="checked"
                     >
@@ -881,7 +1102,8 @@ export function AdminPage() {
                 statusText={predictionProgress.text}
                 detail={predictionProgress.detail}
               />
-            </Card>
+              </Card>
+            </div>
 
             <Card
               id="admin-coreset"
@@ -922,17 +1144,25 @@ export function AdminPage() {
               >
                 <Alert
                   showIcon
-                  type={incrementalSummary?.can_run_incremental ? "info" : "warning"}
+                  type={
+                    hasNewUnlabeledSinceBaseline
+                      ? "warning"
+                      : canRunIncrementalForSelectedStrategy
+                        ? "info"
+                        : "warning"
+                  }
                   style={{ marginBottom: 16 }}
                   message={
-                    incrementalSummary?.can_run_incremental
-                      ? `当前增量基线：${incrementalSummary.baseline_batch_no ?? incrementalSummary.baseline_run_no ?? "-"}`
-                      : "当前还没有可用的增量基线"
+                    hasNewUnlabeledSinceBaseline
+                      ? `上次选题后新增了 ${incrementalSummary?.new_unlabeled_count ?? 0} 道未标注题，建议使用增量更新`
+                      : canRunIncrementalForSelectedStrategy
+                        ? "上次选题后暂无新的未标注题"
+                      : "当前算法还没有可用的增量基线"
                   }
                   description={
-                    incrementalSummary?.can_run_incremental
-                      ? `待增量更新题数 ${incrementalSummary.incremental_candidate_count}，历史锚点 ${incrementalSummary.anchor_count}，快照截止 ${formatDateTime(incrementalSummary.snapshot_created_before ?? null)}。`
-                      : "请先运行一次全量 CoreSet 选题，系统才会在后续导入新题后支持只对新增未标注题执行增量更新。"
+                    canRunIncrementalForSelectedStrategy
+                      ? `当前未标注池共有 ${incrementalSummary?.current_pool_count ?? 0} 道题，增量基线 ${incrementalSummary?.baseline_batch_no ?? incrementalSummary?.baseline_run_no ?? "-"}，快照截止 ${formatDateTime(incrementalSummary?.snapshot_created_before ?? null)}。点击“开始选题”会全量重算未标注池分布；点击“增量更新未标注池”会复用该算法基线。`
+                      : "请先用当前算法运行一次全量 CoreSet 选题。后续有新的未标注题加入后，系统会增量更新未标注池分布，并从当前全部未标注题中重新选题。"
                   }
                 />
                 <Row gutter={[16, 4]}>
@@ -956,14 +1186,14 @@ export function AdminPage() {
                   </Col>
                   <Col xs={24}>
                     <Form.Item
-                      label="候选范围"
+                      label="候选题目范围"
                       name="data_scope"
                       rules={[{ required: true }]}
                     >
                       <Select
                         options={[
-                          { value: "all", label: "全部数据：所有可用题目" },
-                          { value: "pending", label: "未标注数据：未标注池所有题目" },
+                          { value: "all", label: "全部题目：所有可用题目" },
+                          { value: "pending", label: "未标注池：当前未标注池中的全部题目" },
                         ]}
                       />
                     </Form.Item>
@@ -993,11 +1223,12 @@ export function AdminPage() {
                       disabled={
                         isCoresetActive ||
                         coresetDataScope !== "pending" ||
-                        !incrementalSummary?.can_run_incremental ||
-                        (incrementalSummary.incremental_candidate_count ?? 0) <= 0
+                        !canRunIncrementalForSelectedStrategy ||
+                        !hasNewUnlabeledSinceBaseline ||
+                        (incrementalSummary?.current_pool_count ?? 0) <= 0
                       }
                     >
-                      增量更新新导入题
+                      增量更新未标注池
                     </Button>
                   </Space>
                 </Row>
@@ -1030,10 +1261,10 @@ export function AdminPage() {
                       message={`批次 ${latestCoreSetResult.batch_no}`}
                       description={
                         latestCoreSetResult.selected_count <= 0
-                          ? "本次没有选出题目，请尝试调整候选范围、策略或选题数量。"
+                          ? "本次没有选出题目，请尝试调整候选题目范围、策略或选题数量。"
                           : latestCoreSetResult.moved_count < latestCoreSetResult.selected_count
-                            ? `本次共选中 ${latestCoreSetResult.selected_count} 题，其中 ${latestCoreSetResult.moved_count} 题新加入待标注池。其余题目已不在未标注池，因此没有再次入池，但仍可查看本次算法选中的题目。`
-                            : `本次共选中 ${latestCoreSetResult.selected_count} 题，已全部加入待标注池。`
+                            ? `本次共选中 ${latestCoreSetResult.selected_count} 道题，其中 ${latestCoreSetResult.moved_count} 道新进入待标注池。其余题目已不在未标注池，因此没有再次进入待标注池，但仍可查看本次算法选中的题目。`
+                            : `本次共选中 ${latestCoreSetResult.selected_count} 道题，已全部进入待标注池。`
                       }
                     />
                     <Space wrap>
@@ -1054,7 +1285,7 @@ export function AdminPage() {
                         }
                         disabled={latestCoreSetResult.moved_question_ids.length <= 0}
                       >
-                        查看已加入待标注池的题目
+                        查看进入待标注池的题目
                       </Button>
                     </Space>
                   </Space>
@@ -1076,8 +1307,8 @@ export function AdminPage() {
           <Space direction="vertical" size={16} style={{ width: "100%" }}>
             <Descriptions column={2} bordered size="small">
               <Descriptions.Item label="状态">
-                <Tag color={statusTagColor(selectedCoresetRun.status)}>
-                  {selectedCoresetRun.status}
+                <Tag color={getRunStatusColor(selectedCoresetRun.status)}>
+                  {getRunStatusLabel(selectedCoresetRun.status)}
                 </Tag>
               </Descriptions.Item>
               <Descriptions.Item label="运行阶段">
@@ -1090,8 +1321,8 @@ export function AdminPage() {
               <Descriptions.Item label="策略">
                 {formatAlgorithmLabel(selectedCoresetRun.strategy)}
               </Descriptions.Item>
-              <Descriptions.Item label="候选范围">
-                {selectedCoresetRun.data_scope === "pending" ? "未标注池" : "全部题目"}
+              <Descriptions.Item label="候选题目范围">
+                {selectedCoresetRun.data_scope === "pending" ? "未标注池中的题目" : "全部题目"}
               </Descriptions.Item>
               <Descriptions.Item label="更新模式">
                 {selectedCoresetRun.update_mode === "incremental" ? "增量更新" : "全量选题"}
@@ -1107,17 +1338,23 @@ export function AdminPage() {
               <Descriptions.Item label="候选数">
                 {selectedCoresetRun.candidate_count}
               </Descriptions.Item>
+              <Descriptions.Item label="当前未标注池">
+                {String(selectedCoresetRun.metrics_json?.current_pool_count ?? "-")}
+              </Descriptions.Item>
+              <Descriptions.Item label="较基线新增">
+                {String(selectedCoresetRun.metrics_json?.new_unlabeled_count ?? "-")}
+              </Descriptions.Item>
               <Descriptions.Item label="选中数">
                 {selectedCoresetRun.selected_count}
               </Descriptions.Item>
-              <Descriptions.Item label="入池数">
+              <Descriptions.Item label="进入待标注池数量">
                 {selectedCoresetRun.moved_count}
               </Descriptions.Item>
               <Descriptions.Item label="运行模式">
                 {String(selectedCoresetRun.metrics_json?.selection_mode ?? "-")}
               </Descriptions.Item>
-              <Descriptions.Item label="批次号">
-                {selectedCoresetRun.batch_no ?? "-"}
+              <Descriptions.Item label="结果批次号">
+                {selectedCoresetRun.recommendation_batch_no ?? selectedCoresetRun.batch_no ?? "-"}
               </Descriptions.Item>
               <Descriptions.Item label="历史锚点数">
                 {String(selectedCoresetRun.metrics_json?.anchor_count ?? "-")}
@@ -1190,7 +1427,7 @@ export function AdminPage() {
                 }
                 disabled={selectedCoresetRun.moved_question_ids.length <= 0}
               >
-                查看本次入池题目
+                查看本次进入待标注池的题目
               </Button>
             </Space>
           </Space>
@@ -1286,7 +1523,7 @@ function getPredictionProgress(run: PredictionRun | null): ProgressInfo {
       percent: 100,
       status: "success",
       text: `${run.run_no} 已完成`,
-      detail: `候选 ${run.candidate_count} 题，选中 ${run.selected_count}/${selectCount} 题，加入待标注池 ${run.moved_count} 题。`,
+      detail: `候选 ${run.candidate_count} 题，选中 ${run.selected_count}/${selectCount} 题，进入待标注池 ${run.moved_count} 题。`,
     };
   }
 
@@ -1311,7 +1548,7 @@ function getPredictionProgress(run: PredictionRun | null): ProgressInfo {
     detail:
       run.status === "RUNNING"
         ? `目标选题 ${selectCount} 题，当前已处理 ${processedCount}/${totalCount}，batch_size=${batchSize || "-"}。`
-        : `目标选题 ${selectCount} 题，候选范围为全部未标注数据。`,
+        : `目标选题 ${selectCount} 题，候选题目范围为全部未标注题。`,
   };
 }
 
@@ -1340,7 +1577,7 @@ function getCoreSetProgress(run: CoresetRun | null): ProgressInfo {
       percent: 100,
       status: "success",
       text: `${run.batch_no ?? run.run_no} 已完成`,
-      detail: `候选 ${run.candidate_count} 题，选中 ${run.selected_count}/${run.requested_count} 题，加入待标注池 ${run.moved_count} 题。`,
+      detail: `候选 ${run.candidate_count} 题，选中 ${run.selected_count}/${run.requested_count} 题，进入待标注池 ${run.moved_count} 题。`,
     };
   }
 
@@ -1420,17 +1657,46 @@ function formatBatchType(value: string) {
     : "低置信度选题";
 }
 
-function formatDateTime(value?: string | null) {
-  if (!value) return "-";
-  return value.replace("T", " ").slice(0, 19);
+function annotationPolicySyncAlertType(
+  status: AnnotationPolicySyncStatus["status"],
+): "info" | "success" | "warning" | "error" {
+  if (status === "running") return "info";
+  if (status === "completed") return "success";
+  if (status === "failed") return "error";
+  return "warning";
 }
 
-function statusTagColor(status: string) {
-  if (status === "SUCCESS") return "green";
-  if (status === "FAILED") return "red";
-  if (status === "RUNNING") return "processing";
-  return "default";
+function annotationPolicySyncMessage(syncStatus: AnnotationPolicySyncStatus) {
+  if (syncStatus.status === "running") {
+    return `后台正在同步 ${syncStatus.target_annotator_count} 人策略`;
+  }
+  if (syncStatus.status === "completed") {
+    return `后台同步已完成，共更新 ${syncStatus.updated_question_count} 道未开工题`;
+  }
+  if (syncStatus.status === "failed") {
+    return "后台同步失败";
+  }
+  return "当前没有待处理的后台同步任务";
 }
+
+function annotationPolicySyncDescription(syncStatus: AnnotationPolicySyncStatus) {
+  if (syncStatus.status === "running") {
+    return `${syncStatus.affected_question_count} 道未开工题正在按 ${syncStatus.target_annotator_count} 人策略回填，发起时间 ${formatDateTime(syncStatus.started_at)}。`;
+  }
+  if (syncStatus.status === "completed") {
+    return `${syncStatus.updated_question_count} / ${syncStatus.affected_question_count} 道未开工题已同步完成，完成时间 ${formatDateTime(syncStatus.finished_at)}。`;
+  }
+  if (syncStatus.status === "failed") {
+    return syncStatus.error_message
+      ? `失败原因：${syncStatus.error_message}`
+      : "后台任务执行失败，请稍后重试。";
+  }
+  if (syncStatus.finished_at) {
+    return `上次完成时间 ${formatDateTime(syncStatus.finished_at)}。`;
+  }
+  return "切换标注人数后，系统会在后台同步尚未开工的题目。";
+}
+
 
 function ProgressPanel({
   title,
@@ -1480,15 +1746,26 @@ function TrainingConsolePanel({
   stderr,
   isActive,
   isTruncated,
+  fillAvailableHeight,
 }: {
   logs: string;
   stderr: string;
   isActive: boolean;
   isTruncated: boolean;
+  fillAvailableHeight?: boolean;
 }) {
   const output = [logs, stderr].filter(Boolean).join("\n\n");
+
   return (
-    <div style={{ marginTop: 18 }}>
+    <div
+      style={{
+        marginTop: 18,
+        flex: fillAvailableHeight ? 1 : undefined,
+        minHeight: fillAvailableHeight ? 0 : undefined,
+        display: fillAvailableHeight ? "flex" : undefined,
+        flexDirection: fillAvailableHeight ? "column" : undefined,
+      }}
+    >
       <Row justify="space-between" align="middle" style={{ marginBottom: 8 }}>
         <Space size={8}>
           <Typography.Text strong>训练控制台</Typography.Text>
@@ -1498,10 +1775,11 @@ function TrainingConsolePanel({
       </Row>
       <pre
         style={{
+          flex: fillAvailableHeight ? 1 : undefined,
           margin: 0,
           padding: 16,
-          minHeight: 260,
-          maxHeight: 420,
+          height: fillAvailableHeight ? undefined : 320,
+          minHeight: fillAvailableHeight ? 160 : undefined,
           overflow: "auto",
           borderRadius: 12,
           background: "#0f172a",

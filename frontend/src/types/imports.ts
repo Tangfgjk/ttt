@@ -39,6 +39,7 @@ export type ImportSourceRecord = {
   duplicate_candidate_count: number;
   source_preview?: string | null;
   normalized_question_preview?: string | null;
+  raw_payload?: Record<string, unknown> | null;
   error_message?: string | null;
 };
 
