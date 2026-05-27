@@ -7,7 +7,7 @@
 当前部署目标是让多人通过公网访问同一套标注系统：
 
 - 代码从 GitHub 仓库拉取。
-- 前端构建为静态文件，由 Nginx 提供访问。
+- 前端由 Docker 多阶段构建生成静态文件，并由 Nginx 容器提供访问。
 - 后端 FastAPI、MySQL、Redis、Celery worker 由 Docker Compose 管理。
 - 正式标注数据写入云服务器 MySQL。
 - 本地电脑只作为开发环境和备份保存环境，不作为正式数据库。
@@ -60,7 +60,6 @@ GitHub 管代码，MySQL 管标注数据，uploads/artifacts 管运行文件和�
 /opt/ttt/models           模型文件
 /opt/ttt/mysql            MySQL 持久化数据
 /opt/ttt/redis            Redis 持久化数据
-/opt/ttt/frontend-dist    前端构建产物
 /opt/ttt/backups          数据库和文件备份
 ```
 
@@ -73,7 +72,6 @@ sudo mkdir -p /opt/ttt/app \
   /opt/ttt/models \
   /opt/ttt/mysql \
   /opt/ttt/redis \
-  /opt/ttt/frontend-dist \
   /opt/ttt/backups
 ```
 
@@ -151,7 +149,6 @@ HOST_ARTIFACTS_DIR=/opt/ttt/artifacts
 HOST_MODELS_DIR=/opt/ttt/models
 HOST_MYSQL_DIR=/opt/ttt/mysql
 HOST_REDIS_DIR=/opt/ttt/redis
-HOST_FRONTEND_DIST_DIR=/opt/ttt/frontend-dist
 
 EMBEDDING_MODEL_PATH=/data/models/math_mlm_model
 ACTIVE_LEARNING_CHECKPOINT_DIR=/data/artifacts/active_learning
@@ -159,17 +156,9 @@ ACTIVE_LEARNING_CHECKPOINT_DIR=/data/artifacts/active_learning
 
 `deploy/compose/.env` 是服务器私有配置，不提交 GitHub。
 
-### 4.5 构建前端
+### 4.5 启动服务
 
-```bash
-cd /opt/ttt/app/frontend
-npm ci
-npm run build
-rm -rf /opt/ttt/frontend-dist/*
-cp -r dist/* /opt/ttt/frontend-dist/
-```
-
-### 4.6 启动服务
+前端会在 Docker 构建阶段自动执行 `npm ci` 和 `npm run build`，服务器无需单独安装 Node.js。
 
 ```bash
 cd /opt/ttt/app/deploy/compose
@@ -183,7 +172,7 @@ docker compose --env-file .env ps
 docker compose --env-file .env logs -f backend
 ```
 
-### 4.7 导入本地数据库
+### 4.6 导入本地数据库
 
 如果数据库不存在，先创建：
 
@@ -225,17 +214,7 @@ cd /opt/ttt/app
 git pull origin master
 ```
 
-如果前端有修改：
-
-```bash
-cd /opt/ttt/app/frontend
-npm ci
-npm run build
-rm -rf /opt/ttt/frontend-dist/*
-cp -r dist/* /opt/ttt/frontend-dist/
-```
-
-如果后端、Dockerfile 或依赖有修改：
+如果前端、后端、Dockerfile 或依赖有修改：
 
 ```bash
 cd /opt/ttt/app/deploy/compose
@@ -433,4 +412,3 @@ du -sh /opt/ttt/*
 ```bash
 ss -tlnp
 ```
-
