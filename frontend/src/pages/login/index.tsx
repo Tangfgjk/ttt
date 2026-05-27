@@ -25,7 +25,11 @@ export function LoginPage() {
       const result = await login(values);
       setSession(buildSessionFromAuthUser(result.user));
       message.success(result.message);
-      navigate(resolvePostLoginPath(result.user), { replace: true });
+      const requestedPath =
+        location.state && typeof location.state === "object" && "from" in location.state
+          ? location.state.from
+          : undefined;
+      navigate(resolvePostLoginPath(result.user, requestedPath), { replace: true });
     } catch {
       message.error("登录失败，请检查用户名和密码");
     } finally {

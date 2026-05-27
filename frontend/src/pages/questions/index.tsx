@@ -34,6 +34,7 @@ import {
   getAnnotationStatusLabel,
   getAnnotationTaskStatusLabel,
 } from "@/constants/annotation-status";
+import { getConfidenceLevelLabel } from "@/constants/confidence-level";
 import {
   useAdminQuestionReview,
 } from "@/modules/annotations/hooks";
@@ -270,12 +271,12 @@ function QuestionDetailDrawerContent({
                     <Space wrap>
                       <Typography.Text strong>{annotation.user_name}</Typography.Text>
                       <Tag>{annotation.task_status ? getAnnotationTaskStatusLabel(annotation.task_status) : "-"}</Tag>
-                      <Tag color="blue">置信度 {annotation.confidence_level ?? "-"}</Tag>
                     </Space>
                     <Space size={[8, 8]} wrap style={{ marginTop: 8 }}>
                       {annotation.competencies.map((item) => (
                         <Tag key={`${annotation.annotation_id}-${item.competency_id}`} color={item.level_value > 0 ? "processing" : "default"}>
-                          {item.competency_name}: L{item.level_value}
+                          {item.competency_name}: L{item.level_value} · 信心等级
+                          {getConfidenceLevelLabel(item.confidence_level ?? 5)}
                         </Tag>
                       ))}
                     </Space>

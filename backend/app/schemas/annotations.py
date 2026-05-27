@@ -148,6 +148,7 @@ class ClaimAnnotationResponse(BaseModel):
 class AnnotationCompetencyInput(BaseModel):
     competency_id: int
     level_value: int = Field(ge=0, le=3)
+    confidence_level: int = Field(default=5, ge=1, le=5)
 
 
 class SubmitAnnotationRequest(BaseModel):
@@ -248,6 +249,7 @@ class ReviewAnnotationCompetencyOut(BaseModel):
     competency_id: int
     competency_name: str
     level_value: int
+    confidence_level: int = 5
 
 
 class ReviewAnnotationOut(BaseModel):
@@ -274,6 +276,8 @@ class AnnotationConsensusDimensionOut(BaseModel):
     recommended_level_value: int | None = None
     agreement_score: float
     consensus_status: Literal["UNANIMOUS", "MAJORITY", "DISPUTED"]
+    decision_status: str | None = None
+    reason_code: str | None = None
     vote_summary: list[AnnotationConsensusVoteOut]
 
 
@@ -321,6 +325,23 @@ class ClaimReviewTaskResponse(BaseModel):
     claimed_count: int
     task_ids: list[int]
     items: list[ReviewTaskOut]
+
+
+class AutoReconcileReviewTasksRequest(BaseModel):
+    reviewer_user_id: int
+    include_unclaimed: bool = True
+    limit: int = Field(default=1000, ge=1, le=5000)
+
+
+class AutoReconcileReviewTasksResponse(BaseModel):
+    scanned_count: int
+    auto_closed_count: int
+    still_disputed_count: int
+    skipped_insufficient_count: int
+    auto_closed_question_ids: list[int]
+    auto_closed_review_task_ids: list[int]
+    still_disputed_question_ids: list[int]
+    skipped_insufficient_question_ids: list[int]
 
 
 class ReviewTaskListResponse(BaseModel):

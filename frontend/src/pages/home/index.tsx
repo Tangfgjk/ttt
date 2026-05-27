@@ -413,7 +413,7 @@ const datasetMap: Partial<Record<`${SubjectKey}:${StageKey}`, DefinitionDataset>
 function PositioningView() {
   return (
     <>
-      <Row id="overview-metrics" gutter={[16, 16]} className="page-section-anchor">
+      <Row id="overview-metrics" gutter={[16, 16]} className="page-section-anchor overview-positioning-grid">
         {positioningCards.map((item) => (
           <Col key={item.title} xs={24} md={12}>
             <Card className="overview-summary-card">
@@ -434,8 +434,8 @@ function PositioningView() {
         ))}
       </Row>
 
-      <Row gutter={[16, 16]}>
-        <Col id="overview-definitions" xs={24} xl={14} className="page-section-anchor">
+      <Row gutter={[16, 16]} className="overview-positioning-board-row">
+        <Col id="overview-definitions" xs={24} lg={12} className="page-section-anchor">
           <Card title="当前标注维度" className="overview-board-card">
             <div className="overview-dimension-grid">
               {annotationDimensions.map((item) => (
@@ -453,7 +453,7 @@ function PositioningView() {
           </Card>
         </Col>
 
-        <Col id="overview-references" xs={24} xl={10} className="page-section-anchor">
+        <Col id="overview-references" xs={24} lg={12} className="page-section-anchor">
           <Card title="判定逻辑" className="overview-board-card">
             <div className="overview-step-list">
               {workflowSteps.map((item, index) => (

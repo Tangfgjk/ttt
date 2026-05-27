@@ -21,6 +21,32 @@ function looksLikeHtml(value: string) {
   return /<\/?[a-z][\s\S]*>/i.test(value);
 }
 
+const knownFontFamilyPattern =
+  "(?:Arial|Calibri|Cambria|Times New Roman|Times|Helvetica|Microsoft YaHei|SimSun|FangSong|KaiTi|宋体|黑体|楷体|仿宋|微软雅黑)";
+
+const styleDirectivePatterns = [
+  /\\style\s*\{\s*(?:font\s*-\s*family|font\s*-\s*size|font\s*-\s*weight|font\s*-\s*style|color|background\s*-\s*color|line\s*-\s*height)\s*:[^}]*\}/gi,
+  new RegExp(
+    String.raw`\\style\s*font\s*-\s*family\s*:\s*(?:"[^"]*"|'[^']*'|${knownFontFamilyPattern}(?:\s*,\s*${knownFontFamilyPattern})*)\s*;?`,
+    "gi",
+  ),
+  /\\style\s*font\s*-\s*size\s*:\s*\d+(?:\.\d+)?\s*(?:px|pt|em|rem|%)\s*;?/gi,
+  /\\style\s*(?:font\s*-\s*weight|font\s*-\s*style|color|background\s*-\s*color|line\s*-\s*height)\s*:\s*[^\\\s，。；;,）)]*\s*;?/gi,
+];
+
+function normalizeLatexEscapes(value: string) {
+  return value
+    .replace(/\\n(?=\s*[A-ZＡ-Ｚ0-9一-龥])/g, "\n")
+    .replace(/\\\\(?=[A-Za-z{}])/g, "\\");
+}
+
+function cleanQuestionContent(value: string) {
+  const cleaned = styleDirectivePatterns
+    .reduce((current, pattern) => current.replace(pattern, ""), value)
+    .replace(/\sstyle\s*=\s*(["'])[\s\S]*?\1/gi, "");
+  return normalizeLatexEscapes(cleaned);
+}
+
 function linkifyImageUrls(value: string) {
   const imageUrlPattern = /(https?:\/\/[^\s<>"']+\.(?:png|jpe?g|gif|webp|svg)(?:\?[^\s<>"']*)?)/gi;
   return value.replace(
@@ -30,19 +56,21 @@ function linkifyImageUrls(value: string) {
 }
 
 function buildMarkup(html?: string | null, text?: string | null) {
-  if (html?.trim()) {
-    return html;
+  const cleanedHtml = html ? cleanQuestionContent(html) : "";
+  if (cleanedHtml.trim()) {
+    return cleanedHtml;
   }
 
-  if (!text?.trim()) {
+  const cleanedText = text ? cleanQuestionContent(text) : "";
+  if (!cleanedText.trim()) {
     return "";
   }
 
-  if (looksLikeHtml(text)) {
-    return text;
+  if (looksLikeHtml(cleanedText)) {
+    return cleanedText;
   }
 
-  return linkifyImageUrls(escapeHtml(text)).replace(/\n/g, "<br />");
+  return linkifyImageUrls(escapeHtml(cleanedText)).replace(/\n/g, "<br />");
 }
 
 export function QuestionRichText({

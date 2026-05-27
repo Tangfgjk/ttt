@@ -21,6 +21,7 @@ import { formatBackendDateTime } from "@/app/date-time";
 import { useAuthStore } from "@/app/store/auth-store";
 import { QuestionRichText } from "@/components/question-rich-text";
 import { getAnnotationStatusColor, getAnnotationStatusLabel } from "@/constants/annotation-status";
+import { getConfidenceLevelLabel } from "@/constants/confidence-level";
 import { useAnnotatorHistory } from "@/modules/annotations/hooks";
 import type { AnnotatorHistoryItem } from "@/types/annotations";
 
@@ -240,7 +241,6 @@ function AnnotationHistoryDetail({ item }: { item: AnnotatorHistoryItem }) {
       <Card size="small" title="我的标注结果">
         <Space direction="vertical" size={12} style={{ width: "100%" }}>
           <Space wrap>
-            <Tag color="blue">置信度 {item.annotation.confidence_level ?? "-"}</Tag>
             <Typography.Text type="secondary">
               提交于 {formatBackendDateTime(item.submitted_at)}
             </Typography.Text>
@@ -248,7 +248,8 @@ function AnnotationHistoryDetail({ item }: { item: AnnotatorHistoryItem }) {
           <Space size={[8, 8]} wrap>
             {item.annotation.competencies.map((competency) => (
               <Tag key={competency.competency_id} color={competency.level_value > 0 ? "processing" : "default"}>
-                {competency.competency_name}: L{competency.level_value}
+                {competency.competency_name}: L{competency.level_value} · 信心等级
+                {getConfidenceLevelLabel(competency.confidence_level ?? 5)}
               </Tag>
             ))}
           </Space>

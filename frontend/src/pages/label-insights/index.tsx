@@ -25,6 +25,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { usePageHashScroll } from "@/app/use-page-hash-scroll";
 import { useAuthStore } from "@/app/store/auth-store";
 import { QuestionDetailSections } from "@/components/question-detail-sections";
+import { getConfidenceLevelLabel } from "@/constants/confidence-level";
 import {
   useAdminQuestionReview,
   useOverrideAdminQuestionReview,
@@ -159,6 +160,13 @@ function getStageCompetencies(allCompetencies: CompetencyItem[], stage?: string 
   return allCompetencies
     .filter((item) => order.has(item.code))
     .sort((a, b) => (order.get(a.code) ?? 999) - (order.get(b.code) ?? 999));
+}
+
+function competencyLevelTagColor(levelValue: number) {
+  if (levelValue >= 3) return "magenta";
+  if (levelValue === 2) return "purple";
+  if (levelValue === 1) return "processing";
+  return "default";
 }
 
 function sortCognitiveDistribution(items: AnnotatedDistributionBucket[]) {
@@ -1108,24 +1116,32 @@ export function LabelInsightsPage() {
 
             {(reviewQuery.data?.annotations?.length ?? 0) > 0 ? (
               <Card size="small" title="标注员提交记录">
-                <Space direction="vertical" size={12} style={{ width: "100%" }}>
+                <Row gutter={[12, 12]}>
                   {(reviewQuery.data?.annotations ?? []).map((annotation) => (
-                    <div key={annotation.annotation_id}>
-                      <Space wrap>
-                        <Typography.Text strong>{annotation.user_name}</Typography.Text>
-                        <Tag>置信度 {annotation.confidence_level ?? "-"}</Tag>
-                        <Tag>认知层级 {annotation.cognitive_level_id ?? "-"}</Tag>
-                      </Space>
-                      <Space wrap size={[6, 6]} style={{ marginTop: 8 }}>
-                        {annotation.competencies.map((competency) => (
-                          <Tag key={`${annotation.annotation_id}-${competency.competency_id}`}>
-                            {competency.competency_name} L{competency.level_value}
-                          </Tag>
-                        ))}
-                      </Space>
-                    </div>
+                    <Col xs={24} lg={12} key={annotation.annotation_id}>
+                      <Card size="small" className="label-insights-annotation-card">
+                        <Space direction="vertical" size={10} style={{ width: "100%" }}>
+                          <Space wrap>
+                            <Typography.Text strong>{annotation.user_name}</Typography.Text>
+                            <Tag>认知层级 {annotation.cognitive_level_id ?? "-"}</Tag>
+                          </Space>
+                          <Space wrap size={[6, 6]}>
+                            {annotation.competencies.map((competency) => (
+                              <Tag
+                                key={`${annotation.annotation_id}-${competency.competency_id}`}
+                                color={competencyLevelTagColor(competency.level_value)}
+                                className={competency.level_value > 0 ? "label-insights-annotation-tag--active" : undefined}
+                              >
+                                {competency.competency_name} L{competency.level_value} · 信心等级
+                                {getConfidenceLevelLabel(competency.confidence_level ?? 5)}
+                              </Tag>
+                            ))}
+                          </Space>
+                        </Space>
+                      </Card>
+                    </Col>
                   ))}
-                </Space>
+                </Row>
               </Card>
             ) : null}
 

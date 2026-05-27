@@ -133,6 +133,11 @@ export function WorkspacePage() {
         <Typography.Paragraph>
           这里优先展示“我今天该做什么”。标注员可以继续做题并回看自己的历史标注；复核员可以继续处理待复核题，并查看自己已经完成的复核记录。
         </Typography.Paragraph>
+        {isReviewer ? (
+          <Typography.Paragraph type="secondary" style={{ marginTop: -4 }}>
+            这里的待复核题仅统计打标争议产生的复核任务，不包括“判重复核”里的疑似重复题。
+          </Typography.Paragraph>
+        ) : null}
         <Space wrap>
           <Tag color="green">{session?.name}</Tag>
           <Tag color="blue">{isReviewer ? "复核视角" : "标注视角"}</Tag>
@@ -164,7 +169,7 @@ export function WorkspacePage() {
         <Col xs={24} md={8}>
           <Card>
             <Statistic
-              title={isReviewer ? "我的待复核题" : "我的待标注题"}
+              title={isReviewer ? "我的待复核题（不含判重复核）" : "我的待标注题"}
               value={summary?.pending_task_count ?? 0}
               loading={workspaceSummaryQuery.isLoading}
             />

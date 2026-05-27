@@ -14,6 +14,7 @@ from app.schemas.dedup_review import (
     ReviewSourceRecordSummary,
 )
 from app.services.import_service import ImportService
+from app.services.question_content_hydrator import compose_dataset2_stem
 
 
 class DedupReviewService:
@@ -157,7 +158,8 @@ class DedupReviewService:
         candidate_content = candidate_question.content
 
         source_stem_text = (
-            raw_payload.get("question")
+            compose_dataset2_stem(raw_payload)[0]
+            or raw_payload.get("question")
             or raw_payload.get("question_text")
             or raw_payload.get("题目内容")
             or raw_payload.get("题干（子题）")

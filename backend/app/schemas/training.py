@@ -14,6 +14,10 @@ class TrainingCompetencyDefinition(BaseModel):
     name: str
     definition: str
     focus_tip: str
+    positive_cues: list[str] = Field(default_factory=list)
+    negative_cues: list[str] = Field(default_factory=list)
+    level_guidance: list[str] = Field(default_factory=list)
+    boundary_examples: list[str] = Field(default_factory=list)
 
 
 class TrainingQuestionOut(BaseModel):
@@ -24,6 +28,8 @@ class TrainingQuestionOut(BaseModel):
     question_type_name: str | None = None
     answer_text: str | None = None
     solution_text: str | None = None
+    coach_tip: str | None = None
+    review_analysis: str | None = None
 
 
 class TrainingGuideExampleCompetencyOut(BaseModel):

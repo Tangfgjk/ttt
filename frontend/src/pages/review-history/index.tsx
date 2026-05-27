@@ -22,6 +22,7 @@ import { formatBackendDateTime, parseBackendDateTime } from "@/app/date-time";
 import { useAuthStore } from "@/app/store/auth-store";
 import { QuestionRichText } from "@/components/question-rich-text";
 import { getAnnotationStatusColor, getAnnotationStatusLabel } from "@/constants/annotation-status";
+import { getConfidenceLevelLabel } from "@/constants/confidence-level";
 import { useReviewTasks } from "@/modules/annotations/hooks";
 import type { ReviewTask } from "@/types/annotations";
 
@@ -216,12 +217,12 @@ function ReviewHistoryDetail({ item }: { item: ReviewTask }) {
             <div key={annotation.annotation_id}>
               <Space wrap>
                 <Typography.Text strong>{annotation.user_name}</Typography.Text>
-                <Tag color="blue">置信度 {annotation.confidence_level ?? "-"}</Tag>
               </Space>
               <Space size={[8, 8]} wrap style={{ marginTop: 8 }}>
                 {annotation.competencies.map((competency) => (
                   <Tag key={`${annotation.annotation_id}-${competency.competency_id}`} color={competency.level_value > 0 ? "processing" : "default"}>
-                    {competency.competency_name}: L{competency.level_value}
+                    {competency.competency_name}: L{competency.level_value} · 信心等级
+                    {getConfidenceLevelLabel(competency.confidence_level ?? 5)}
                   </Tag>
                 ))}
               </Space>

@@ -38,6 +38,16 @@ def test_login_rejects_wrong_password() -> None:
         raise AssertionError("Expected wrong-password login to fail.")
 
 
+def test_login_trims_whitespace_around_login_name() -> None:
+    db = _build_session()
+    service = AuthService(db)
+
+    session = service.login(" reviewer ", "reviewer123")
+
+    assert session.username == "reviewer"
+    assert session.role == "reviewer"
+
+
 def test_register_creates_annotator_user() -> None:
     db = _build_session()
     service = AuthService(db)

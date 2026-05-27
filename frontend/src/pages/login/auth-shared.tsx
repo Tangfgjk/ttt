@@ -75,7 +75,37 @@ export function AuthShell({ title, description, children, foot }: AuthShellProps
   );
 }
 
-export function buildSessionFromAuthUser(user: AuthUser): UserSession {
+type NewUserSession = Omit<UserSession, "issuedAt" | "expiresAt">;
+
+const roleAllowedPathPrefixes = {
+  admin: [
+    "/admin",
+    "/admin/overview",
+    "/imports",
+    "/questions",
+    "/visualization",
+    "/label-insights",
+    "/training",
+    "/dedup-review",
+  ],
+  annotator: ["/workspace", "/annotator-training", "/annotate", "/annotation-history"],
+  reviewer: ["/workspace", "/review", "/review-history", "/dedup-review"],
+} satisfies Record<AuthUser["role"], string[]>;
+
+function isSafeRelativePath(path?: unknown): path is string {
+  return typeof path === "string" && path.startsWith("/") && !path.startsWith("//") && !path.includes("://");
+}
+
+function canAccessPath(user: AuthUser, path: string) {
+  if (path === "/") return true;
+  if (path === "/login" || path === "/register" || path === "/forgot-password") return false;
+  if (user.role === "annotator" && user.training_scope === "none") {
+    return path.startsWith("/annotator-training");
+  }
+  return roleAllowedPathPrefixes[user.role].some((prefix) => path === prefix || path.startsWith(`${prefix}/`) || path.startsWith(`${prefix}#`));
+}
+
+export function buildSessionFromAuthUser(user: AuthUser): NewUserSession {
   return {
     id: user.id,
     username: user.username,
@@ -88,7 +118,14 @@ export function buildSessionFromAuthUser(user: AuthUser): UserSession {
   };
 }
 
-export function resolvePostLoginPath(user: AuthUser) {
+export function resolvePostLoginPath(user: AuthUser, requestedPath?: unknown) {
+  if (isSafeRelativePath(requestedPath) && canAccessPath(user, requestedPath)) {
+    return requestedPath === "/" ? defaultRolePath(user) : requestedPath;
+  }
+  return defaultRolePath(user);
+}
+
+function defaultRolePath(user: AuthUser) {
   if (user.role === "admin") {
     return "/admin/overview";
   }

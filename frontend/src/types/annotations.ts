@@ -179,6 +179,7 @@ export type AnnotatorHistoryListResponse = {
 export type AnnotationCompetencyInput = {
   competency_id: number;
   level_value: number;
+  confidence_level?: number;
 };
 
 export type SubmitAnnotationRequest = {
@@ -226,6 +227,7 @@ export type ReviewAnnotationCompetency = {
   competency_id: number;
   competency_name: string;
   level_value: number;
+  confidence_level: number;
 };
 
 export type ReviewAnnotation = {
@@ -252,6 +254,8 @@ export type AnnotationConsensusDimension = {
   recommended_level_value?: number | null;
   agreement_score: number;
   consensus_status: "UNANIMOUS" | "MAJORITY" | "DISPUTED";
+  decision_status?: string | null;
+  reason_code?: string | null;
   vote_summary: AnnotationConsensusVote[];
 };
 
@@ -299,6 +303,23 @@ export type ClaimReviewTaskResponse = {
   claimed_count: number;
   task_ids: number[];
   items: ReviewTask[];
+};
+
+export type AutoReconcileReviewTasksRequest = {
+  reviewer_user_id: number;
+  include_unclaimed?: boolean;
+  limit?: number;
+};
+
+export type AutoReconcileReviewTasksResponse = {
+  scanned_count: number;
+  auto_closed_count: number;
+  still_disputed_count: number;
+  skipped_insufficient_count: number;
+  auto_closed_question_ids: number[];
+  auto_closed_review_task_ids: number[];
+  still_disputed_question_ids: number[];
+  skipped_insufficient_question_ids: number[];
 };
 
 export type ReviewTaskListResponse = {

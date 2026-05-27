@@ -47,6 +47,7 @@ import type { TrainingStage } from "@/types/training";
 type AnnotationFormValues = {
   confidence_level?: number;
   competencies?: Record<number, number>;
+  competency_confidence_levels?: Record<number, number>;
 };
 
 type SubmittedAnnotationDraft = {
@@ -54,6 +55,7 @@ type SubmittedAnnotationDraft = {
   values: {
     confidence_level: number;
     competencies: Record<number, number>;
+    competency_confidence_levels: Record<number, number>;
   };
   canRevise: boolean;
 };
@@ -289,12 +291,21 @@ export function AnnotatePage() {
             lastSubmittedTask.values.competencies[item.id] ?? 0,
           ]),
         ),
+        competency_confidence_levels: Object.fromEntries(
+          visibleCompetencies.map((item) => [
+            item.id,
+            lastSubmittedTask.values.competency_confidence_levels[item.id] ?? 5,
+          ]),
+        ),
       });
       return;
     }
     form.setFieldsValue({
       confidence_level: 5,
       competencies: Object.fromEntries(visibleCompetencies.map((item) => [item.id, 0])),
+      competency_confidence_levels: Object.fromEntries(
+        visibleCompetencies.map((item) => [item.id, 5]),
+      ),
     });
   }, [
     displayTask?.id,
@@ -340,20 +351,24 @@ export function AnnotatePage() {
       return;
     }
     const competencyValues = values.competencies ?? {};
+    const confidenceValues = values.competency_confidence_levels ?? {};
     const competencyPayload = visibleCompetencies.map((item) => ({
       competency_id: item.id,
       level_value: competencyValues[item.id] ?? 0,
+      confidence_level: confidenceValues[item.id] ?? 5,
     }));
     const normalizedValues = {
       confidence_level: values.confidence_level ?? 5,
       competencies: Object.fromEntries(
         visibleCompetencies.map((item) => [item.id, competencyValues[item.id] ?? 0]),
       ),
+      competency_confidence_levels: Object.fromEntries(
+        visibleCompetencies.map((item) => [item.id, confidenceValues[item.id] ?? 5]),
+      ),
     };
     const result = await activeMutation.mutateAsync({
       annotator_user_id: userId,
       cognitive_level_id: null,
-      confidence_level: values.confidence_level ?? null,
       competencies: competencyPayload,
     });
     setLastSubmittedTask({
@@ -530,17 +545,12 @@ export function AnnotatePage() {
                   />
                 ) : null}
 
-                <Form.Item
-                  name="confidence_level"
-                  label="信心等级"
-                  extra="默认高。该等级会随标注结果一起提交，并提供给复核员参考。"
-                >
-                  <Radio.Group
-                    options={CONFIDENCE_OPTIONS}
-                    optionType="button"
-                    buttonStyle="solid"
-                  />
-                </Form.Item>
+                <Alert
+                  type="info"
+                  showIcon
+                  message="信心等级现在按每个素养分别填写，默认高；它表示你对该素养层级判断的把握程度，会随标注结果提供给复核员参考。"
+                  style={{ marginBottom: 16 }}
+                />
 
                 <Space direction="vertical" size={14} style={{ width: "100%" }}>
                   {visibleCompetencies.map((item) => {
@@ -564,6 +574,16 @@ export function AnnotatePage() {
                           buttonStyle="solid"
                         />
                       </Form.Item>
+                      <Space size={6} wrap>
+                        <Typography.Text type="secondary">信心等级</Typography.Text>
+                        <Form.Item name={["competency_confidence_levels", item.id]} noStyle>
+                          <Radio.Group
+                            options={CONFIDENCE_OPTIONS}
+                            optionType="button"
+                            buttonStyle="solid"
+                          />
+                        </Form.Item>
+                      </Space>
                     </div>
                     );
                   })}

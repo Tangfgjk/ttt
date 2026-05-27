@@ -3,13 +3,19 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.base import Base
-from app.models.assessment import QuestionGoldCompetency, QuestionGoldLabel
+from app.models.assessment import (
+    QuestionAggregateCompetency,
+    QuestionGoldCompetency,
+    QuestionGoldLabel,
+    QuestionLabelAggregate,
+)
 from app.models.auth import Role, User
 from app.models.dictionary import Competency, Grade, Subject
 from app.models.question import Question, QuestionContent
 from app.schemas.annotations import ClaimAnnotationRequest
 from app.schemas.training import TrainingCompetencyAnswer, TrainingQuestionAnswer, TrainingSubmitRequest
 from app.services.annotation_service import AnnotationService
+from app.services.training_examples import JUNIOR_CALIBRATION_QUESTION_IDS
 from app.services.training_service import STAGE_COMPETENCY_CODES, TrainingService
 
 
@@ -51,8 +57,15 @@ def _seed_stage_gold_labels(db: Session, stage: str) -> tuple[User, list[Compete
         competencies.append(competency)
     db.flush()
 
-    for index, competency in enumerate(competencies, start=1):
+    question_ids = (
+        JUNIOR_CALIBRATION_QUESTION_IDS
+        if stage == "junior"
+        else list(range(1, len(competencies) + 1))
+    )
+    for index, question_id in enumerate(question_ids, start=1):
+        competency = competencies[(index - 1) % len(competencies)]
         question = Question(
+            id=question_id,
             subject_id=subject.id,
             grade_id=grade.id,
             annotation_status="PENDING",
@@ -68,6 +81,20 @@ def _seed_stage_gold_labels(db: Session, stage: str) -> tuple[User, list[Compete
         db.add(
             QuestionGoldCompetency(
                 gold_label_id=gold.id,
+                competency_id=competency.id,
+                level_value=1,
+            )
+        )
+        aggregate = QuestionLabelAggregate(
+            question_id=question.id,
+            completed_annotation_count=2,
+            finalized_at=None,
+        )
+        db.add(aggregate)
+        db.flush()
+        db.add(
+            QuestionAggregateCompetency(
+                aggregate_id=aggregate.id,
                 competency_id=competency.id,
                 level_value=1,
             )
@@ -127,11 +154,13 @@ def test_training_module_includes_guide_examples_and_question_fields() -> None:
 
     module = service.get_module(user.id, "junior")
 
-    assert module.questions
+    assert len(module.questions) == 15
     assert module.guide_examples
-    assert len(module.guide_examples) <= 2
+    assert len(module.guide_examples) <= 4
+    assert module.questions[0].review_analysis
     assert module.guide_examples[0].competencies
     assert module.guide_examples[0].coach_tip
+    assert module.competency_definitions[0].positive_cues
 
 
 def test_claim_questions_rejects_untrained_annotator() -> None:

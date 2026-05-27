@@ -70,6 +70,21 @@ class QuestionRepository:
                 continue
         return None
 
+    def list_source_payloads_by_question_ids(self, question_ids: list[int]) -> dict[int, list[dict]]:
+        if not question_ids:
+            return {}
+        stmt = (
+            select(SourceQuestionRecord.normalized_question_id, SourceQuestionRecord.raw_payload)
+            .where(SourceQuestionRecord.normalized_question_id.in_(question_ids))
+            .order_by(SourceQuestionRecord.normalized_question_id.asc(), SourceQuestionRecord.id.desc())
+        )
+        payloads: dict[int, list[dict]] = {}
+        for normalized_question_id, raw_payload in self.db.execute(stmt):
+            if normalized_question_id is None or not isinstance(raw_payload, dict):
+                continue
+            payloads.setdefault(int(normalized_question_id), []).append(raw_payload)
+        return payloads
+
     def list_difficulty_level_stats(self) -> list[tuple[int, int]]:
         stmt = (
             select(Question.difficulty_level, func.count(Question.id))

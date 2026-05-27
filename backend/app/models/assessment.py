@@ -298,6 +298,7 @@ class AnnotationCompetency(Base):
     annotation_id: Mapped[int] = mapped_column(ForeignKey("annotations.id"), nullable=False)
     competency_id: Mapped[int] = mapped_column(ForeignKey("competencies.id"), nullable=False)
     level_value: Mapped[int] = mapped_column(SmallInteger, default=1, nullable=False)
+    confidence_level: Mapped[int] = mapped_column(SmallInteger, default=5, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     annotation: Mapped["Annotation"] = relationship(back_populates="competencies")

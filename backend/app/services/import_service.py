@@ -40,6 +40,7 @@ from app.schemas.imports import (
 from app.schemas.pagination import PageMeta
 from app.services.annotation_policy import AnnotationPolicyStore
 from app.services.embedding_service import EmbeddingService
+from app.services.question_content_hydrator import compose_dataset2_stem
 from app.services.question_dedup_service import DedupDecision, DedupInput, QuestionDedupService
 
 IMPORTER_REGISTRY: dict[str, type[BaseImporter]] = {
@@ -330,6 +331,7 @@ class ImportService:
             subject = self._require_subject(payload)
             question_type = self._resolve_question_type(payload)
             grade = self._resolve_grade(payload)
+            stem_text, stem_html = compose_dataset2_stem(payload)
             question = self._create_question_from_dataset2(
                 data_source=data_source,
                 payload=payload,
@@ -337,6 +339,8 @@ class ImportService:
                 grade_id=grade.id if grade else None,
                 question_type_id=question_type.id if question_type else None,
                 fingerprint_hash=source_record.normalized_hash or "",
+                stem_text=stem_text or "",
+                stem_html=stem_html,
             )
         elif data_source.code == "dataset1_labeled":
             subject = self._require_subject({"subjectCategory": "math"})
@@ -597,7 +601,7 @@ class ImportService:
             subject = self._require_subject(payload)
             question_type = self._resolve_question_type(payload)
             grade = self._resolve_grade(payload)
-            stem_text = self._first_text(payload, "question", "stem", "content")
+            stem_text, stem_html = compose_dataset2_stem(payload)
             if not stem_text:
                 raise ValueError("Dataset2 record is missing question text.")
 
@@ -626,6 +630,8 @@ class ImportService:
                     grade_id=grade.id if grade else None,
                     question_type_id=question_type.id if question_type else None,
                     fingerprint_hash=decision.fingerprint.content_hash,
+                    stem_text=stem_text,
+                    stem_html=stem_html,
                 )
                 source_record.normalized_question_id = question.id
             elif decision.question_id is not None:
@@ -779,6 +785,8 @@ class ImportService:
         grade_id: int | None,
         question_type_id: int | None,
         fingerprint_hash: str,
+        stem_text: str,
+        stem_html: str | None,
     ) -> Question:
         sub_questions = payload.get("subQues") or []
         annotator_count = self.policy_store.get_annotator_count()
@@ -799,8 +807,8 @@ class ImportService:
         content = self.repository.save_question_content(
             QuestionContent(
                 question_id=question.id,
-                stem_text=self._first_text(payload, "question", "stem", "content") or "",
-                stem_html=self._first_text(payload, "questionHtml", "stemHtml"),
+                stem_text=stem_text,
+                stem_html=stem_html,
                 answer_text=self._first_text(payload, "queAns", "answer", "answerText"),
                 solution_text=self._first_text(payload, "solution", "analysis", "solutionText"),
                 source_content_hash=fingerprint_hash,
@@ -1223,7 +1231,8 @@ class ImportService:
             normalized_hash=source_record.normalized_hash,
             normalized_question_id=source_record.normalized_question_id,
             duplicate_candidate_count=duplicate_candidate_count,
-            source_preview=self._first_text(payload, "question", "stem", "content", "question_text", "questionText"),
+            source_preview=compose_dataset2_stem(payload)[0]
+            or self._first_text(payload, "question", "stem", "content", "question_text", "questionText"),
             normalized_question_preview=normalized_preview,
             raw_payload=payload,
             error_message=source_record.error_message,

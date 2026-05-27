@@ -13,6 +13,7 @@ import {
   Card,
   Col,
   Descriptions,
+  Drawer,
   Empty,
   Form,
   Progress,
@@ -32,8 +33,9 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { formatBackendDateTime } from "@/app/date-time";
 import { useAuthStore } from "@/app/store/auth-store";
 import { CompetencyHelpPopover } from "@/components/competency-help-popover";
+import { QuestionDetailSections } from "@/components/question-detail-sections";
 import { QuestionRichText } from "@/components/question-rich-text";
-import { useCompetencies } from "@/modules/question-bank/hooks";
+import { useCompetencies, useQuestionDetail } from "@/modules/question-bank/hooks";
 import {
   useSubmitTraining,
   useTrainingAttempts,
@@ -43,6 +45,7 @@ import {
 import type { CompetencyItem } from "@/types/dictionary";
 import type {
   TrainingAttemptResponse,
+  TrainingCompetencyDefinition,
   TrainingGuideExample,
   TrainingQuestion,
   TrainingQuestionCompetencyResult,
@@ -497,6 +500,7 @@ function KnowledgeGuide({
                       {item.definition}
                     </Typography.Paragraph>
                     <div className="training-focus-tip">{item.focus_tip}</div>
+                    <TrainingBoundaryDetails item={item} />
                   </div>
                 </Col>
               ))}
@@ -543,6 +547,74 @@ function GuideStep({ title, text }: { title: string; text: string }) {
       <Typography.Text strong>{title}</Typography.Text>
       <Typography.Paragraph type="secondary">{text}</Typography.Paragraph>
     </div>
+  );
+}
+
+function TrainingBoundaryDetails({ item }: { item: TrainingCompetencyDefinition }) {
+  const groups = [
+    { title: "适合标", values: item.positive_cues, color: "success" as const },
+    { title: "谨慎标", values: item.negative_cues, color: "warning" as const },
+    { title: "层级口径", values: item.level_guidance, color: "processing" as const },
+    { title: "易混提醒", values: item.boundary_examples, color: "default" as const },
+  ].filter((group) => group.values.length);
+
+  if (!groups.length) {
+    return null;
+  }
+
+  return (
+    <div className="training-boundary-grid">
+      {groups.map((group) => (
+        <div key={group.title} className="training-boundary-block">
+          <Tag color={group.color}>{group.title}</Tag>
+          <ul>
+            {group.values.map((value) => (
+              <li key={value}>{value}</li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TrainingQuestionPreview({ question }: { question: TrainingQuestion }) {
+  const [detailOpen, setDetailOpen] = useState(false);
+  const detailQuery = useQuestionDetail(detailOpen ? question.question_id : null);
+
+  return (
+    <>
+      <div className="training-question-preview">
+        <Space direction="vertical" size={10} style={{ width: "100%" }}>
+          <Space wrap style={{ justifyContent: "space-between", width: "100%" }}>
+            <Typography.Text type="secondary">
+              预览仅展示题干摘要，含子题或完整解析请打开详情。
+            </Typography.Text>
+            <Button size="small" onClick={() => setDetailOpen(true)}>
+              查看题目详情
+            </Button>
+          </Space>
+          <QuestionRichText
+            text={question.stem_text}
+            emptyLabel="暂无题干"
+            className="question-rich-text--training-preview"
+          />
+        </Space>
+      </div>
+      <Drawer
+        title={`题目详情 #${question.question_id}`}
+        width="min(980px, 92vw)"
+        open={detailOpen}
+        onClose={() => setDetailOpen(false)}
+        destroyOnClose
+      >
+        {detailQuery.data ? (
+          <QuestionDetailSections detail={detailQuery.data} />
+        ) : (
+          <Empty description={detailQuery.isLoading ? "题目详情加载中" : "暂无题目详情"} />
+        )}
+      </Drawer>
+    </>
   );
 }
 
@@ -646,7 +718,10 @@ function PracticePanel({
                     ) : null}
                   </Space>
                 </Space>
-                <QuestionRichText text={currentQuestion.stem_text} emptyLabel="暂无题干" />
+                <TrainingQuestionPreview question={currentQuestion} />
+                {currentQuestion.coach_tip ? (
+                  <Alert type="info" showIcon message={currentQuestion.coach_tip} />
+                ) : null}
                 <div className="training-answer-grid">
                   {visibleCompetencies.map((item) => {
                     const definition = competencyDefinitionMap.get(item.code);
@@ -854,8 +929,11 @@ function ResultReviewPanel({
                     </Tag>
                   </Space>
                 </Space>
-                <QuestionRichText text={activeQuestion.stem_text} emptyLabel="暂无题干" />
+                <TrainingQuestionPreview question={activeQuestion} />
                 <QuestionResultAlert result={activeResult} />
+                {activeQuestion.review_analysis ? (
+                  <ResultTextBlock title="标注解析" text={activeQuestion.review_analysis} />
+                ) : null}
                 <CompetencyComparisonList items={activeResult.competency_results} />
                 {activeQuestion.answer_text ? (
                   <ResultTextBlock title="参考答案" text={activeQuestion.answer_text} />
@@ -915,7 +993,7 @@ function ResultTextBlock({ title, text }: { title: string; text: string }) {
   return (
     <div className="training-result-text-block">
       <Typography.Text strong>{title}</Typography.Text>
-      <Typography.Paragraph type="secondary">{text}</Typography.Paragraph>
+      <QuestionRichText text={text} emptyLabel="暂无内容" />
     </div>
   );
 }

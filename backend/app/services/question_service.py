@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.repositories.question_repository import QuestionFilters, QuestionRepository
 from app.schemas.question import DifficultyLevelStatOut
+from app.services.question_content_hydrator import hydrate_question_contents
 
 
 class QuestionService:
@@ -12,7 +13,9 @@ class QuestionService:
         self.repository = QuestionRepository(db)
 
     def list_questions(self, filters: QuestionFilters):
-        return self.repository.list_questions(filters)
+        items, total = self.repository.list_questions(filters)
+        hydrate_question_contents(self.repository.db, items)
+        return items, total
 
     def get_question_detail(self, question_id: int):
         question = self.repository.get_question_by_id(question_id)
@@ -21,6 +24,7 @@ class QuestionService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Question {question_id} not found.",
             )
+        hydrate_question_contents(self.repository.db, [question])
         source_difficulty_level = self.repository.get_source_difficulty_level(question_id)
         difficulty_level_stats = [
             DifficultyLevelStatOut(level=level, question_count=question_count)

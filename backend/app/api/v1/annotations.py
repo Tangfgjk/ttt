@@ -20,6 +20,8 @@ from app.schemas.annotations import (
     AnnotatorHistoryReviewState,
     AnnotatorHistoryTimeRange,
     AnnotationTaskListResponse,
+    AutoReconcileReviewTasksRequest,
+    AutoReconcileReviewTasksResponse,
     ClaimAnnotationRequest,
     ClaimAnnotationResponse,
     ClaimReviewTaskRequest,
@@ -194,6 +196,17 @@ async def claim_review_tasks(
     db: Session = Depends(get_db),
 ) -> ClaimReviewTaskResponse:
     return AnnotationService(db).claim_review_tasks(payload)
+
+
+@router.post(
+    "/review-tasks/reconcile-auto-consensus",
+    response_model=AutoReconcileReviewTasksResponse,
+)
+async def reconcile_review_tasks_with_current_rules(
+    payload: AutoReconcileReviewTasksRequest,
+    db: Session = Depends(get_db),
+) -> AutoReconcileReviewTasksResponse:
+    return AnnotationService(db).reconcile_review_tasks_with_current_rules(payload)
 
 
 @router.get("/review-tasks", response_model=ReviewTaskListResponse)

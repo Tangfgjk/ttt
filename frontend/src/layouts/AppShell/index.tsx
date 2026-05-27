@@ -109,6 +109,8 @@ const menuItems: AppMenuItem[] = [
     roles: ["admin"],
     children: [
       { key: "/admin#admin-training", label: "训练模型" },
+      { key: "/admin#admin-pools", label: "题池治理" },
+      { key: "/admin#admin-coreset-history", label: "CoreSet 历史任务" },
       { key: "/admin#admin-prediction", label: "低置信度选题" },
       { key: "/admin#admin-coreset", label: "CoreSet 选题" },
     ],
@@ -120,8 +122,6 @@ const menuItems: AppMenuItem[] = [
     roles: ["admin"],
     children: [
       { key: "/training#training-summary", label: "运行概览" },
-      { key: "/training#training-selection-batches", label: "题池治理" },
-      { key: "/training#training-coreset-history", label: "CoreSet 历史" },
       { key: "/training#training-trends", label: "趋势分析" },
       { key: "/training#training-runs", label: "训练任务" },
       { key: "/training#training-models", label: "模型版本" },

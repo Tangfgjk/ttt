@@ -619,10 +619,11 @@ export function AdminPage() {
         <Space size={[8, 8]} wrap>
           {[
             { id: "admin-policy", label: "标注策略" },
-            { id: "admin-pools", label: "题池治理" },
-            { id: "admin-coreset", label: "CoreSet" },
             { id: "admin-training", label: "训练模型" },
+            { id: "admin-pools", label: "题池治理" },
+            { id: "admin-coreset-history", label: "CoreSet 历史任务" },
             { id: "admin-prediction", label: "低置信度预测" },
+            { id: "admin-coreset", label: "CoreSet 选题" },
           ].map((item) => (
             <Button key={item.id} onClick={() => scrollToSection(item.id)}>
               {item.label}
@@ -728,54 +729,6 @@ export function AdminPage() {
           </Col>
         ))}
       </Row>
-
-      <Card
-        id="admin-pools"
-        className="page-section-anchor"
-        title="题池治理"
-        extra={
-          <Popconfirm
-            title="回收题池"
-            description="会把标注中的题目回收，并把待标注池中未开始的题目退回未标注池。"
-            okText="确认回收"
-            cancelText="取消"
-            onConfirm={() => void handleResetPools()}
-          >
-            <Button loading={resetPoolsMutation.isPending}>
-              回收标注中与待标注题目
-            </Button>
-          </Popconfirm>
-        }
-      >
-        <Space direction="vertical" size={14} style={{ width: "100%" }}>
-          <Typography.Text type="secondary">
-            这里集中查看 CoreSet / 低置信度选题批次，并支持按批次撤回，以及回收标注中和待标注的题目。
-          </Typography.Text>
-          <Table<SelectionBatchSummary>
-            rowKey="id"
-            size="small"
-            pagination={{ pageSize: 8, showSizeChanger: false }}
-            dataSource={selectionBatches}
-            columns={selectionBatchColumns}
-            locale={{ emptyText: "暂无可治理的选题批次" }}
-          />
-        </Space>
-      </Card>
-
-      <Card
-        id="admin-coreset"
-        className="page-section-anchor"
-        title="CoreSet 历史任务"
-      >
-        <Table<CoresetRun>
-          rowKey="id"
-          size="small"
-          pagination={{ pageSize: 8, showSizeChanger: false }}
-          dataSource={activeLearning?.coreset_runs ?? []}
-          columns={coresetRunColumns}
-          locale={{ emptyText: "暂无 CoreSet 历史任务" }}
-        />
-      </Card>
 
       <Row gutter={[16, 16]} align="stretch">
         <Col xs={24} xl={14}>
@@ -1295,6 +1248,54 @@ export function AdminPage() {
           </Space>
         </Col>
       </Row>
+
+      <Card
+        id="admin-pools"
+        className="page-section-anchor"
+        title="题池治理"
+        extra={
+          <Popconfirm
+            title="回收题池"
+            description="会把标注中的题目回收，并把待标注池中未开始的题目退回未标注池。"
+            okText="确认回收"
+            cancelText="取消"
+            onConfirm={() => void handleResetPools()}
+          >
+            <Button loading={resetPoolsMutation.isPending}>
+              回收标注中与待标注题目
+            </Button>
+          </Popconfirm>
+        }
+      >
+        <Space direction="vertical" size={14} style={{ width: "100%" }}>
+          <Typography.Text type="secondary">
+            这里集中查看 CoreSet / 低置信度选题批次，并支持按批次撤回，以及回收标注中和待标注的题目。
+          </Typography.Text>
+          <Table<SelectionBatchSummary>
+            rowKey="id"
+            size="small"
+            pagination={{ pageSize: 8, showSizeChanger: false }}
+            dataSource={selectionBatches}
+            columns={selectionBatchColumns}
+            locale={{ emptyText: "暂无可治理的选题批次" }}
+          />
+        </Space>
+      </Card>
+
+      <Card
+        id="admin-coreset-history"
+        className="page-section-anchor"
+        title="CoreSet 历史任务"
+      >
+        <Table<CoresetRun>
+          rowKey="id"
+          size="small"
+          pagination={{ pageSize: 8, showSizeChanger: false }}
+          dataSource={activeLearning?.coreset_runs ?? []}
+          columns={coresetRunColumns}
+          locale={{ emptyText: "暂无 CoreSet 历史任务" }}
+        />
+      </Card>
 
       <Drawer
         title={selectedCoresetRun ? `CoreSet 任务详情 · ${selectedCoresetRun.run_no}` : "CoreSet 任务详情"}

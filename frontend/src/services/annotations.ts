@@ -1,6 +1,6 @@
 import { apiClient } from "@/services/api-client";
 import type {
-    AdminAggregateOverrideRequest,
+  AdminAggregateOverrideRequest,
   AnnotationPolicySettings,
   AnnotationPolicyUpdateRequest,
   AnnotationPolicyUpdateResponse,
@@ -12,6 +12,8 @@ import type {
   AdminSelectionResponse,
   AnnotatorHistoryListResponse,
   AnnotationTaskListResponse,
+  AutoReconcileReviewTasksRequest,
+  AutoReconcileReviewTasksResponse,
   ClaimAnnotationRequest,
   ClaimAnnotationResponse,
   ClaimReviewTaskRequest,
@@ -146,6 +148,16 @@ export async function reviseAnnotationTask(taskId: number, payload: SubmitAnnota
 export async function claimReviewTasks(payload: ClaimReviewTaskRequest) {
   const response = await apiClient.post<ClaimReviewTaskResponse>(
     "/annotations/review-tasks/claim",
+    payload,
+  );
+  return response.data;
+}
+
+export async function reconcileReviewTasksWithCurrentRules(
+  payload: AutoReconcileReviewTasksRequest,
+) {
+  const response = await apiClient.post<AutoReconcileReviewTasksResponse>(
+    "/annotations/review-tasks/reconcile-auto-consensus",
     payload,
   );
   return response.data;

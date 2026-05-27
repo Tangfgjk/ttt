@@ -435,7 +435,7 @@ export function TrainingPage() {
           训练监控
         </Typography.Title>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          查看主动学习训练任务、模型版本、预测任务，以及按相同参数分组后的指标趋势，同时在这里统一查看题池治理、状态回收与 CoreSet 历史任务。
+          查看主动学习训练任务、模型版本、预测任务，以及按相同参数分组后的指标趋势。题池治理与 CoreSet 历史任务统一保留在管理后台。
         </Typography.Paragraph>
       </Card>
 
@@ -460,65 +460,6 @@ export function TrainingPage() {
           <SummaryCard title="模型版本数" value={modelVersions.length} hint="已登记到系统的模型版本" loading={isLoading} />
         </Col>
       </Row>
-
-      <Card
-        id="training-selection-batches"
-        className="page-section-anchor training-board-card"
-        title="题池治理"
-        extra={(
-          <Popconfirm
-            title="回收题池"
-            description="会把标注中的题目回收，并把待标注池中尚未开始的题目退回未标注池。"
-            okText="确认回收"
-            cancelText="取消"
-            onConfirm={() => void handleResetPools()}
-          >
-            <Button loading={resetPoolsMutation.isPending}>回收标注中与待标注题目</Button>
-          </Popconfirm>
-        )}
-      >
-        <Space direction="vertical" size={14} style={{ width: "100%" }}>
-          <Typography.Text type="secondary">
-            这里集中查看 CoreSet / 低置信度选题批次，并支持按批次撤回。
-          </Typography.Text>
-          <Space wrap>
-            {(Object.keys(poolStatusLabels) as AnnotationPoolStatus[]).map((status) => (
-              <Tag key={status} color="blue">
-                {poolStatusLabels[status]} {isPoolSummaryLoading ? "-" : poolCounts[status] ?? 0}
-              </Tag>
-            ))}
-          </Space>
-          <Table<SelectionBatchSummary>
-            rowKey="id"
-            size="small"
-            pagination={{
-              pageSize: 8,
-              showSizeChanger: true,
-              pageSizeOptions: ["8", "10", "20"],
-              showTotal: (total: number) => `共 ${total} 个选题批次`,
-            }}
-            dataSource={selectionBatches}
-            columns={selectionBatchColumns}
-            locale={{ emptyText: "暂无可治理的选题批次" }}
-          />
-        </Space>
-      </Card>
-
-      <Card id="training-coreset-history" className="page-section-anchor training-board-card" title="CoreSet 历史任务">
-        <Table<CoresetRun>
-          rowKey="id"
-          size="small"
-          pagination={{
-            pageSize: 8,
-            showSizeChanger: true,
-            pageSizeOptions: ["8", "10", "20"],
-            showTotal: (total: number) => `共 ${total} 个 CoreSet 任务`,
-          }}
-          dataSource={coresetRuns}
-          columns={coresetRunColumns}
-          locale={{ emptyText: "暂无 CoreSet 历史任务" }}
-        />
-      </Card>
 
       <Card
         id="training-trends"

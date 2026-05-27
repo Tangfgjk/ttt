@@ -7,7 +7,7 @@ import random
 from uuid import uuid4
 
 from fastapi import HTTPException, status
-from sqlalchemy import String, case, delete, func, select, update
+from sqlalchemy import String, case, delete, func, or_, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.time_utils import local_day_start_utc_naive
@@ -39,6 +39,8 @@ from app.schemas.annotations import (
     AnnotationPolicySyncStatusOut,
     AnnotationPolicyUpdateRequest,
     AnnotationPolicyUpdateResponse,
+    AutoReconcileReviewTasksRequest,
+    AutoReconcileReviewTasksResponse,
     AdminPoolResetRequest,
     AdminPoolResetResponse,
     AdminReviewDecisionRequest,
@@ -77,6 +79,7 @@ from app.services.annotation_policy import (
     describe_annotation_policy,
 )
 from app.services.coreset_selection import CoresetCandidate, CoresetSelector
+from app.services.question_content_hydrator import hydrate_question_contents
 from app.services.training_service import training_scope_allows_stage
 
 QUESTION_STATUS_PENDING = "PENDING"
@@ -528,6 +531,7 @@ class AnnotationService:
         self.db.commit()
         for task in tasks:
             self.db.refresh(task)
+        hydrate_question_contents(self.db, [task.question for task in tasks if task.question is not None])
 
         return ClaimAnnotationResponse(
             claimed_count=len(tasks),
@@ -565,6 +569,7 @@ class AnnotationService:
                 .limit(page_size)
             ).unique()
         )
+        hydrate_question_contents(self.db, [item.question for item in items if item.question is not None])
         return [self._serialize_annotation_task(item) for item in items], int(total)
 
     def list_annotator_history(
@@ -640,6 +645,7 @@ class AnnotationService:
                 .limit(page_size)
             ).unique()
         )
+        hydrate_question_contents(self.db, [item.question for item in rows if item.question is not None])
         return [self._serialize_annotator_history_item(item) for item in rows], int(total)
 
     def submit_annotation(
@@ -682,7 +688,9 @@ class AnnotationService:
             task_id=task.id,
             version_no=1,
             cognitive_level_id=payload.cognitive_level_id,
-            confidence_level=payload.confidence_level,
+            confidence_level=payload.confidence_level
+            if payload.confidence_level is not None
+            else self._overall_confidence_level(payload.competencies),
             time_spent_seconds=payload.time_spent_seconds,
             is_final=True,
             annotation_status=ANNOTATION_STATUS_SUBMITTED,
@@ -691,6 +699,7 @@ class AnnotationService:
             AnnotationCompetency(
                 competency_id=item.competency_id,
                 level_value=item.level_value,
+                confidence_level=item.confidence_level,
             )
             for item in payload.competencies
         ]
@@ -707,6 +716,10 @@ class AnnotationService:
                 "annotation_id": annotation.id,
                 "task_id": task.id,
                 "confidence_level": payload.confidence_level,
+                "competency_confidence_levels": {
+                    str(item.competency_id): item.confidence_level
+                    for item in payload.competencies
+                },
             },
         )
 
@@ -798,13 +811,18 @@ class AnnotationService:
 
         annotation.version_no += 1
         annotation.cognitive_level_id = payload.cognitive_level_id
-        annotation.confidence_level = payload.confidence_level
+        annotation.confidence_level = (
+            payload.confidence_level
+            if payload.confidence_level is not None
+            else self._overall_confidence_level(payload.competencies)
+        )
         annotation.time_spent_seconds = payload.time_spent_seconds
         annotation.annotation_status = ANNOTATION_STATUS_SUBMITTED
         annotation.competencies = [
             AnnotationCompetency(
                 competency_id=item.competency_id,
                 level_value=item.level_value,
+                confidence_level=item.confidence_level,
             )
             for item in payload.competencies
         ]
@@ -819,6 +837,10 @@ class AnnotationService:
                 "task_id": task.id,
                 "version_no": annotation.version_no,
                 "confidence_level": payload.confidence_level,
+                "competency_confidence_levels": {
+                    str(item.competency_id): item.confidence_level
+                    for item in payload.competencies
+                },
             },
         )
 
@@ -870,6 +892,90 @@ class AnnotationService:
             claimed_count=len(task_ids),
             task_ids=task_ids,
             items=[self._serialize_review_task(task_id) for task_id in task_ids],
+        )
+
+    def reconcile_review_tasks_with_current_rules(
+        self,
+        payload: AutoReconcileReviewTasksRequest,
+    ) -> AutoReconcileReviewTasksResponse:
+        reviewer = self._require_user(payload.reviewer_user_id)
+        self._require_reviewer(reviewer)
+
+        eligible_owner_clause = ReviewTask.reviewer_id == reviewer.id
+        if payload.include_unclaimed:
+            eligible_owner_clause = or_(
+                eligible_owner_clause,
+                ReviewTask.review_status == REVIEW_STATUS_PENDING,
+            )
+
+        stmt = (
+            select(ReviewTask)
+            .join(Question, Question.id == ReviewTask.question_id)
+            .where(ReviewTask.review_status.in_([REVIEW_STATUS_PENDING, REVIEW_STATUS_IN_PROGRESS]))
+            .where(Question.annotation_status == QUESTION_STATUS_REVIEW_PENDING)
+            .where(eligible_owner_clause)
+            .order_by(ReviewTask.created_at.asc(), ReviewTask.id.asc())
+            .limit(payload.limit)
+            .with_for_update(skip_locked=True)
+        )
+        tasks = list(self.db.scalars(stmt).unique())
+
+        auto_closed_question_ids: list[int] = []
+        auto_closed_review_task_ids: list[int] = []
+        still_disputed_question_ids: list[int] = []
+        skipped_insufficient_question_ids: list[int] = []
+        processed_question_ids: set[int] = set()
+
+        for task in tasks:
+            if task.question_id in processed_question_ids:
+                continue
+            processed_question_ids.add(task.question_id)
+
+            question = self.db.scalar(
+                select(Question)
+                .where(Question.id == task.question_id)
+                .with_for_update()
+            )
+            if question is None:
+                continue
+
+            final_annotations = self._final_annotations(question.id)
+            question.annotation_count = len(final_annotations)
+            if len(final_annotations) < question.required_annotations:
+                skipped_insufficient_question_ids.append(question.id)
+                continue
+
+            open_task_ids = list(
+                self.db.scalars(
+                    select(ReviewTask.id)
+                    .where(ReviewTask.question_id == question.id)
+                    .where(
+                        ReviewTask.review_status.in_(
+                            [REVIEW_STATUS_PENDING, REVIEW_STATUS_IN_PROGRESS]
+                        )
+                    )
+                )
+            )
+            aggregate = self._aggregate_question(question, final_annotations)
+            if aggregate.is_disputed:
+                question.annotation_status = QUESTION_STATUS_REVIEW_PENDING
+                still_disputed_question_ids.append(question.id)
+            else:
+                question.annotation_status = QUESTION_STATUS_COMPLETED
+                auto_closed_question_ids.append(question.id)
+                auto_closed_review_task_ids.extend(open_task_ids)
+
+        self.db.commit()
+
+        return AutoReconcileReviewTasksResponse(
+            scanned_count=len(tasks),
+            auto_closed_count=len(auto_closed_question_ids),
+            still_disputed_count=len(still_disputed_question_ids),
+            skipped_insufficient_count=len(skipped_insufficient_question_ids),
+            auto_closed_question_ids=auto_closed_question_ids,
+            auto_closed_review_task_ids=auto_closed_review_task_ids,
+            still_disputed_question_ids=still_disputed_question_ids,
+            skipped_insufficient_question_ids=skipped_insufficient_question_ids,
         )
 
     def list_review_tasks(
@@ -1338,7 +1444,7 @@ class AnnotationService:
             existing_review = self.db.scalar(
                 select(ReviewTask)
                 .where(ReviewTask.aggregate_id == aggregate.id)
-                .where(ReviewTask.review_status == REVIEW_STATUS_PENDING)
+                .where(ReviewTask.review_status.in_([REVIEW_STATUS_PENDING, REVIEW_STATUS_IN_PROGRESS]))
             )
             if existing_review is None:
                 self.db.add(
@@ -1353,8 +1459,10 @@ class AnnotationService:
                     aggregate_id=aggregate.id,
                     action_code="AUTO_REVIEW_CREATED",
                     detail_json={
+                        "decision_version": "V10",
                         "consensus_status": consensus.consensus_status,
                         "unresolved_dimension_count": consensus.unresolved_dimension_count,
+                        "dimension_decisions": self._dimension_decision_details(consensus),
                     },
                 )
         else:
@@ -1368,8 +1476,10 @@ class AnnotationService:
                 aggregate_id=aggregate.id,
                 action_code="AUTO_CONSENSUS_COMPLETED",
                 detail_json={
+                    "decision_version": "V10",
                     "consensus_status": consensus.consensus_status,
                     "agreement_score": consensus.agreement_score,
+                    "dimension_decisions": self._dimension_decision_details(consensus),
                 },
             )
         return aggregate
@@ -1390,6 +1500,8 @@ class AnnotationService:
         )
         if task is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="复核任务不存在")
+        if task.question is not None:
+            hydrate_question_contents(self.db, [task.question])
         return ReviewTaskOut(
             id=task.id,
             question_id=task.question_id,
@@ -1465,6 +1577,7 @@ class AnnotationService:
                         if item.competency
                         else str(item.competency_id),
                         level_value=item.level_value,
+                        confidence_level=item.confidence_level or 5,
                     )
                     for item in annotation.competencies
                 ],
@@ -1505,6 +1618,7 @@ class AnnotationService:
                         if item.competency
                         else str(item.competency_id),
                         level_value=item.level_value,
+                        confidence_level=item.confidence_level or 5,
                     )
                     for item in annotation.competencies
                 ],
@@ -1513,6 +1627,8 @@ class AnnotationService:
         ]
 
     def _serialize_annotation_task(self, task: AnnotationTask) -> AnnotationTaskOut:
+        if task.question is not None:
+            hydrate_question_contents(self.db, [task.question])
         progress = self._build_progress(
             submitted_annotation_count=task.question.annotation_count,
             active_annotation_count=self._active_task_count(task.question_id),
@@ -1535,6 +1651,8 @@ class AnnotationService:
         self,
         annotation: Annotation,
     ) -> AnnotatorHistoryItemOut:
+        if annotation.question is not None:
+            hydrate_question_contents(self.db, [annotation.question])
         aggregate = self.db.scalar(
             select(QuestionLabelAggregate)
             .options(
@@ -1560,6 +1678,7 @@ class AnnotationService:
                     if item.competency
                     else str(item.competency_id),
                     level_value=item.level_value,
+                    confidence_level=item.confidence_level or 5,
                 )
                 for item in annotation.competencies
             ],
@@ -1580,6 +1699,7 @@ class AnnotationService:
         )
 
     def _serialize_admin_question_review(self, question: Question) -> AdminQuestionReviewOut:
+        hydrate_question_contents(self.db, [question])
         annotations = self._final_annotations(question.id)
         active_annotation_count = self._active_task_count(question.id)
         aggregate = self.db.scalar(
@@ -1745,6 +1865,38 @@ class AnnotationService:
         value, count = counter.most_common(1)[0]
         return value, count / len(values)
 
+    def _overall_confidence_level(self, competencies: list[AnnotationCompetencyInput]) -> int:
+        if not competencies:
+            return 5
+        return min(item.confidence_level for item in competencies)
+
+    def _dimension_decision_details(
+        self,
+        consensus: AnnotationConsensusSummaryOut,
+    ) -> list[dict]:
+        return [
+            {
+                "dimension_type": dimension.dimension_type,
+                "dimension_key": dimension.dimension_key,
+                "dimension_label": dimension.dimension_label,
+                "final_level": dimension.recommended_level_value,
+                "decision_status": dimension.decision_status,
+                "reason_code": dimension.reason_code,
+                "consensus_status": dimension.consensus_status,
+                "agreement_score": dimension.agreement_score,
+                "votes": [
+                    {
+                        "level_value": vote.level_value,
+                        "vote_count": vote.vote_count,
+                        "annotator_names": vote.annotator_names,
+                        "weighted_score": vote.weighted_score,
+                    }
+                    for vote in dimension.vote_summary
+                ],
+            }
+            for dimension in consensus.dimensions
+        ]
+
     def _build_consensus_summary(
         self,
         annotations: list[Annotation],
@@ -1762,7 +1914,7 @@ class AnnotationService:
             )
 
         confidence_map = {
-            annotation.id: float(annotation.confidence_level or 3)
+            annotation.id: float(annotation.confidence_level or 5)
             for annotation in annotations
         }
         annotator_name_map = {
@@ -1794,9 +1946,13 @@ class AnnotationService:
 
         competency_labels = self._competency_label_map()
         competency_votes: dict[int, list[tuple[int, int]]] = defaultdict(list)
+        competency_confidence_maps: dict[int, dict[int, float]] = defaultdict(dict)
         for annotation in annotations:
             for item in annotation.competencies:
                 competency_votes[item.competency_id].append((annotation.id, item.level_value))
+                competency_confidence_maps[item.competency_id][annotation.id] = float(
+                    item.confidence_level or annotation.confidence_level or 5
+                )
 
         for competency_id in sorted(competency_votes):
             dimensions.append(
@@ -1805,7 +1961,7 @@ class AnnotationService:
                     dimension_key=str(competency_id),
                     dimension_label=competency_labels.get(competency_id, str(competency_id)),
                     votes=competency_votes[competency_id],
-                    confidence_map=confidence_map,
+                    confidence_map=competency_confidence_maps[competency_id],
                     annotator_name_map=annotator_name_map,
                 )
             )
@@ -1845,11 +2001,14 @@ class AnnotationService:
         confidence_map: dict[int, float],
         annotator_name_map: dict[int, str],
     ) -> AnnotationConsensusDimensionOut:
+        def confidence(annotation_id: int) -> int:
+            return int(confidence_map.get(annotation_id, 5.0) or 5)
+
         vote_buckets: dict[int | None, list[int]] = defaultdict(list)
         weighted_scores: dict[int | None, float] = defaultdict(float)
         for annotation_id, level_value in votes:
             vote_buckets[level_value].append(annotation_id)
-            weighted_scores[level_value] += confidence_map.get(annotation_id, 3.0)
+            weighted_scores[level_value] += confidence_map.get(annotation_id, 5.0)
 
         sorted_votes = sorted(
             vote_buckets.items(),
@@ -1868,6 +2027,211 @@ class AnnotationService:
             consensus_status = "MAJORITY"
         else:
             consensus_status = "DISPUTED"
+
+        vote_summary = [
+            AnnotationConsensusVoteOut(
+                level_value=level_value,
+                vote_count=len(annotation_ids),
+                annotator_names=[
+                    annotator_name_map.get(annotation_id, f"user:{annotation_id}")
+                    for annotation_id in annotation_ids
+                ],
+                weighted_score=weighted_scores[level_value],
+            )
+            for level_value, annotation_ids in sorted(
+                vote_buckets.items(),
+                key=lambda item: (-len(item[1]), -(item[0] if item[0] is not None else -1)),
+            )
+        ]
+
+        def make_dimension(
+            *,
+            recommended_level_value: int | None,
+            agreement_score: float,
+            consensus_status: str,
+            decision_status: str,
+            reason_code: str,
+        ) -> AnnotationConsensusDimensionOut:
+            return AnnotationConsensusDimensionOut(
+                dimension_type=dimension_type,
+                dimension_key=dimension_key,
+                dimension_label=dimension_label,
+                recommended_level_value=recommended_level_value,
+                agreement_score=agreement_score,
+                consensus_status=consensus_status,
+                decision_status=decision_status,
+                reason_code=reason_code,
+                vote_summary=vote_summary,
+            )
+
+        if dimension_type != "competency":
+            decision_status = (
+                "AUTO_UNANIMOUS"
+                if consensus_status == "UNANIMOUS"
+                else "AUTO_MAJORITY"
+                if consensus_status == "MAJORITY"
+                else "NEED_REVIEW"
+            )
+            return make_dimension(
+                recommended_level_value=recommended_level_value,
+                agreement_score=agreement_score,
+                consensus_status=consensus_status,
+                decision_status=decision_status,
+                reason_code=f"LEGACY_{consensus_status}",
+            )
+
+        vote_count = len(votes)
+        if vote_count == 1:
+            return make_dimension(
+                recommended_level_value=votes[0][1],
+                agreement_score=1.0,
+                consensus_status="UNANIMOUS",
+                decision_status="AUTO_SINGLE",
+                reason_code="SINGLE_ANNOTATOR_ACCEPTED",
+            )
+
+        if recommended_vote_count == vote_count:
+            return make_dimension(
+                recommended_level_value=recommended_level_value,
+                agreement_score=1.0,
+                consensus_status="UNANIMOUS",
+                decision_status="AUTO_UNANIMOUS",
+                reason_code="UNANIMOUS_ACCEPTED",
+            )
+
+        if vote_count == 2:
+            first_id, first_level = votes[0]
+            second_id, second_level = votes[1]
+            first_confidence = confidence(first_id)
+            second_confidence = confidence(second_id)
+            first_level_value = int(first_level or 0)
+            second_level_value = int(second_level or 0)
+
+            if (first_level_value == 0) != (second_level_value == 0):
+                return make_dimension(
+                    recommended_level_value=recommended_level_value,
+                    agreement_score=agreement_score,
+                    consensus_status="DISPUTED",
+                    decision_status="NEED_REVIEW",
+                    reason_code="REVIEW_REQUIRED_ZERO_NON_ZERO",
+                )
+
+            if first_confidence != second_confidence:
+                winner_level = first_level_value if first_confidence > second_confidence else second_level_value
+                return make_dimension(
+                    recommended_level_value=winner_level,
+                    agreement_score=agreement_score,
+                    consensus_status="MAJORITY",
+                    decision_status="AUTO_CONFIDENCE",
+                    reason_code="TWO_ANNOTATORS_NON_ZERO_CONFIDENCE_WIN",
+                )
+
+            if abs(first_level_value - second_level_value) == 1:
+                return make_dimension(
+                    recommended_level_value=min(first_level_value, second_level_value),
+                    agreement_score=agreement_score,
+                    consensus_status="MAJORITY",
+                    decision_status="AUTO_CONSERVATIVE",
+                    reason_code="TWO_ANNOTATORS_ADJACENT_SAME_CONFIDENCE_LOW_LEVEL",
+                )
+
+            return make_dimension(
+                recommended_level_value=recommended_level_value,
+                agreement_score=agreement_score,
+                consensus_status="DISPUTED",
+                decision_status="NEED_REVIEW",
+                reason_code="REVIEW_REQUIRED_WIDE_GAP_SAME_CONFIDENCE",
+            )
+
+        majority_level = int(recommended_level_value or 0)
+        majority_ids = sorted_votes[0][1]
+        if recommended_vote_count >= 2:
+            minority_items = [
+                (annotation_id, int(level_value or 0))
+                for annotation_id, level_value in votes
+                if level_value != recommended_level_value
+            ]
+            if len(majority_ids) == 2 and len(minority_items) == 1:
+                minority_id, minority_level = minority_items[0]
+                majority_confidences = [confidence(annotation_id) for annotation_id in majority_ids]
+                minority_confidence = confidence(minority_id)
+                zero_nonzero_conflict = (majority_level == 0) != (minority_level == 0)
+                wide_nonzero_gap = (
+                    majority_level > 0
+                    and minority_level > 0
+                    and abs(majority_level - minority_level) == 2
+                )
+                if (
+                    all(item == 1 for item in majority_confidences)
+                    and minority_confidence == 5
+                    and (zero_nonzero_conflict or wide_nonzero_gap)
+                ):
+                    return make_dimension(
+                        recommended_level_value=recommended_level_value,
+                        agreement_score=agreement_score,
+                        consensus_status="DISPUTED",
+                        decision_status="NEED_REVIEW",
+                        reason_code="REVIEW_REQUIRED_MAJOR_LOW_MINOR_HIGH",
+                    )
+
+            return make_dimension(
+                recommended_level_value=recommended_level_value,
+                agreement_score=agreement_score,
+                consensus_status="MAJORITY",
+                decision_status="AUTO_MAJORITY",
+                reason_code="MAJORITY_ACCEPTED",
+            )
+
+        level_values = [int(level_value or 0) for _, level_value in votes]
+        if any(level_value == 0 for level_value in level_values):
+            return make_dimension(
+                recommended_level_value=recommended_level_value,
+                agreement_score=agreement_score,
+                consensus_status="DISPUTED",
+                decision_status="NEED_REVIEW",
+                reason_code="REVIEW_REQUIRED_ZERO_NON_ZERO",
+            )
+
+        level_confidences = {
+            int(level_value or 0): confidence(annotation_id)
+            for annotation_id, level_value in votes
+        }
+        if (
+            level_confidences.get(1) == 5
+            and level_confidences.get(3) == 5
+            and level_confidences.get(2) == 1
+        ):
+            return make_dimension(
+                recommended_level_value=recommended_level_value,
+                agreement_score=agreement_score,
+                consensus_status="DISPUTED",
+                decision_status="NEED_REVIEW",
+                reason_code="REVIEW_REQUIRED_EXTREME_HIGH_CONFLICT",
+            )
+
+        max_confidence = max(level_confidences.values())
+        top_levels = [
+            level_value
+            for level_value, level_confidence in level_confidences.items()
+            if level_confidence == max_confidence
+        ]
+        if len(top_levels) == 1:
+            return make_dimension(
+                recommended_level_value=top_levels[0],
+                agreement_score=agreement_score,
+                consensus_status="MAJORITY",
+                decision_status="AUTO_CONFIDENCE",
+                reason_code="THREE_ANNOTATORS_NON_ZERO_CONFIDENCE_WIN",
+            )
+
+        median_level = sorted(level_values)[len(level_values) // 2]
+        return make_dimension(
+            recommended_level_value=median_level,
+            agreement_score=agreement_score,
+            consensus_status="MAJORITY",
+            decision_status="AUTO_CONSERVATIVE",
+            reason_code="THREE_ANNOTATORS_NON_ZERO_MEDIAN",
+        )
 
         return AnnotationConsensusDimensionOut(
             dimension_type=dimension_type,

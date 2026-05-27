@@ -14,6 +14,10 @@ export type TrainingCompetencyDefinition = {
   name: string;
   definition: string;
   focus_tip: string;
+  positive_cues: string[];
+  negative_cues: string[];
+  level_guidance: string[];
+  boundary_examples: string[];
 };
 
 export type TrainingQuestion = {
@@ -24,6 +28,8 @@ export type TrainingQuestion = {
   question_type_name?: string | null;
   answer_text?: string | null;
   solution_text?: string | null;
+  coach_tip?: string | null;
+  review_analysis?: string | null;
 };
 
 export type TrainingGuideExampleCompetency = {

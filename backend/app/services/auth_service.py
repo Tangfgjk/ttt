@@ -44,7 +44,8 @@ class AuthService:
 
     def login(self, login_name: str, password: str) -> UserSessionOut:
         self.bootstrap_default_users_if_needed()
-        user = self.repository.get_user_by_login(login_name)
+        normalized_login_name = login_name.strip()
+        user = self.repository.get_user_by_login(normalized_login_name)
         if user is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

@@ -15,6 +15,7 @@ import {
   getWorkspaceSummary,
   overrideAdminQuestionReview,
   rejectAdminQuestionReview,
+  reconcileReviewTasksWithCurrentRules,
   reviseAnnotationTask,
   resetAnnotationPools,
   rollbackSelectionBatch,
@@ -30,6 +31,7 @@ import type {
   AdminSelectionRequest,
   AdminSelectionResponse,
   AdminPoolResetRequest,
+  AutoReconcileReviewTasksRequest,
   ClaimAnnotationRequest,
   ClaimReviewTaskRequest,
   PoolSummaryResponse,
@@ -227,6 +229,18 @@ export function useClaimReviewTasks() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (payload: ClaimReviewTaskRequest) => claimReviewTasks(payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["annotations"] });
+      queryClient.invalidateQueries({ queryKey: ["questions"] });
+    },
+  });
+}
+
+export function useAutoReconcileReviewTasks() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: AutoReconcileReviewTasksRequest) =>
+      reconcileReviewTasksWithCurrentRules(payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["annotations"] });
       queryClient.invalidateQueries({ queryKey: ["questions"] });

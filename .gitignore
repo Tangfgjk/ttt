@@ -4,6 +4,7 @@
 
 MLM/
 uploads/
+db_backups/
 
 backend/.env
 backend/.venv/
