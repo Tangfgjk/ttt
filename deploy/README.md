@@ -27,3 +27,12 @@ docker compose --env-file .env --profile tools run --rm migrate
 ```
 
 如果首次部署要导入本地完整 SQL 备份，通常先启动 MySQL，再导入 SQL；不要在导入完整结构前先迁移以免出现“表已存在”。更多细节见 `DEPLOYMENT_RUNBOOK.md`。
+
+## 运维文档
+
+- `DEPLOYMENT_GUIDE.md`
+  - 从零开始部署阿里云 ECS、Docker、GitHub Deploy Key、模型和数据库导入。
+- `OPERATIONS_GUIDE.md`
+  - 日常更新代码、重新部署、手动/自动备份、恢复和常见问题处理。
+- `DEPLOYMENT_RUNBOOK.md`
+  - 早期部署记录和补充说明。
