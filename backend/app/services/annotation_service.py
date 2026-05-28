@@ -15,6 +15,7 @@ from app.db.session import SessionLocal
 from app.models.assessment import (
     Annotation,
     AnnotationCompetency,
+    AnnotationKnowledgePoint,
     AnnotationReviewLog,
     AnnotationTask,
     CoresetExperiment,
@@ -33,6 +34,10 @@ from app.models.dictionary import CognitiveLevel, Competency, Grade, Subject
 from app.models.question import Question, QuestionContent
 from app.schemas.annotations import (
     AdminAggregateOverrideRequest,
+    AdminAnnotatorTaskListResponse,
+    AdminAnnotatorTaskOut,
+    AdminRecycleAnnotationTasksRequest,
+    AdminRecycleAnnotationTasksResponse,
     AdminQuestionAnnotationOut,
     AdminQuestionReviewOut,
     AnnotationPolicySettingsOut,
@@ -65,6 +70,8 @@ from app.schemas.annotations import (
     ReviewAnnotationCompetencyOut,
     ReviewAnnotationOut,
     ReviewTaskOut,
+    ReturnReviewTasksRequest,
+    ReturnReviewTasksResponse,
     SelectionBatchRollbackRequest,
     SelectionBatchRollbackResponse,
     SelectionBatchSummaryOut,
@@ -105,6 +112,8 @@ ACTION_LABELS = {
     "AUTO_REVIEW_CREATED": "系统创建争议复核任务",
     "REVIEW_TASK_CLAIMED": "复核员领取复核任务",
     "REVIEW_SUBMITTED": "复核员提交复核结论",
+    "REVIEW_RETURNED_FOR_REANNOTATION": "复核员打回重新标注",
+    "ADMIN_RECYCLED_ANNOTATION_TASK": "管理员回收标注任务",
     "AUTO_REVIEW_CLOSED": "系统关闭待处理复核任务",
     "ADMIN_APPROVED": "管理员审核通过",
     "ADMIN_REJECTED_FOR_REANNOTATION": "管理员打回补标",
@@ -680,7 +689,7 @@ class AnnotationService:
             )
 
         self._ensure_training_access_for_question(user, task.question)
-        self._validate_competencies(payload.competencies)
+        self._validate_competencies(payload.competencies, max_positive=3)
 
         annotation = Annotation(
             question_id=task.question_id,
@@ -793,7 +802,7 @@ class AnnotationService:
             )
 
         self._ensure_training_access_for_question(user, task.question)
-        self._validate_competencies(payload.competencies)
+        self._validate_competencies(payload.competencies, max_positive=3)
 
         annotation = self.db.scalar(
             select(Annotation)
@@ -1001,6 +1010,52 @@ class AnnotationService:
         )
         return [self._serialize_review_task(task.id) for task in rows], int(total)
 
+    def return_my_review_tasks_for_reannotation(
+        self,
+        payload: ReturnReviewTasksRequest,
+    ) -> ReturnReviewTasksResponse:
+        reviewer = self._require_user(payload.reviewer_user_id)
+        self._require_reviewer(reviewer)
+
+        stmt = (
+            select(ReviewTask)
+            .join(Question, Question.id == ReviewTask.question_id)
+            .where(ReviewTask.reviewer_id == reviewer.id)
+            .where(ReviewTask.review_status.in_([REVIEW_STATUS_PENDING, REVIEW_STATUS_IN_PROGRESS]))
+            .where(Question.annotation_status == QUESTION_STATUS_REVIEW_PENDING)
+            .order_by(ReviewTask.created_at.asc(), ReviewTask.id.asc())
+            .with_for_update(skip_locked=True)
+        )
+        review_tasks = list(self.db.scalars(stmt).unique())
+        returned_question_ids: list[int] = []
+        recalled_task_count = 0
+        deleted_annotation_count = 0
+
+        for review_task in review_tasks:
+            question = self.db.scalar(
+                select(Question).where(Question.id == review_task.question_id).with_for_update()
+            )
+            if question is None or question.id in returned_question_ids:
+                continue
+            reset_result = self._reset_question_for_fresh_annotation(
+                question=question,
+                actor_user=reviewer,
+                action_code="REVIEW_RETURNED_FOR_REANNOTATION",
+                comment="复核员批量打回，清空现有标注并重新进入待标注池。",
+            )
+            returned_question_ids.append(question.id)
+            recalled_task_count += reset_result["recalled_task_count"]
+            deleted_annotation_count += reset_result["deleted_annotation_count"]
+
+        self.db.commit()
+        return ReturnReviewTasksResponse(
+            scanned_count=len(review_tasks),
+            returned_count=len(returned_question_ids),
+            returned_question_ids=returned_question_ids,
+            recalled_task_count=recalled_task_count,
+            deleted_annotation_count=deleted_annotation_count,
+        )
+
     def submit_review_task(
         self,
         review_task_id: int,
@@ -1175,6 +1230,93 @@ class AnnotationService:
         self.db.commit()
         refreshed = self._get_question_with_annotations(question_id, with_for_update=False)
         return self._serialize_admin_question_review(refreshed)
+
+    def list_admin_annotator_tasks(
+        self,
+        *,
+        admin_user_id: int,
+        page: int,
+        page_size: int,
+        task_status: str | None = TASK_STATUS_IN_PROGRESS,
+        annotator_user_id: int | None = None,
+    ) -> tuple[list[AdminAnnotatorTaskOut], int]:
+        self._require_admin(admin_user_id)
+        stmt = (
+            select(AnnotationTask)
+            .options(
+                selectinload(AnnotationTask.assignee),
+                selectinload(AnnotationTask.question).selectinload(Question.subject),
+                selectinload(AnnotationTask.question).selectinload(Question.grade),
+                selectinload(AnnotationTask.question).selectinload(Question.question_type),
+                selectinload(AnnotationTask.question).selectinload(Question.content),
+            )
+        )
+        if task_status:
+            stmt = stmt.where(AnnotationTask.task_status == task_status)
+        if annotator_user_id:
+            stmt = stmt.where(AnnotationTask.assignee_id == annotator_user_id)
+
+        total = self.db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
+        tasks = list(
+            self.db.scalars(
+                stmt.order_by(AnnotationTask.assigned_at.desc(), AnnotationTask.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            ).unique()
+        )
+        hydrate_question_contents(self.db, [task.question for task in tasks if task.question is not None])
+        return [self._serialize_admin_annotator_task(task) for task in tasks], int(total)
+
+    def recycle_annotation_tasks(
+        self,
+        payload: AdminRecycleAnnotationTasksRequest,
+    ) -> AdminRecycleAnnotationTasksResponse:
+        admin_user = self._require_admin(payload.admin_user_id)
+        unique_task_ids = list(dict.fromkeys(payload.task_ids))
+        tasks = list(
+            self.db.scalars(
+                select(AnnotationTask)
+                .options(selectinload(AnnotationTask.question))
+                .where(AnnotationTask.id.in_(unique_task_ids))
+                .with_for_update()
+            ).unique()
+        )
+        recycled_task_ids: list[int] = []
+        returned_question_ids: list[int] = []
+        skipped_count = 0
+
+        for task in tasks:
+            if task.task_status != TASK_STATUS_IN_PROGRESS:
+                skipped_count += 1
+                continue
+            task.task_status = TASK_STATUS_RECALLED
+            recycled_task_ids.append(task.id)
+            question = task.question
+            if question is None:
+                continue
+            active_count = self._active_task_count(question.id)
+            final_count = len(self._final_annotations(question.id))
+            question.annotation_count = final_count
+            if final_count == 0 and active_count == 0:
+                question.annotation_status = QUESTION_STATUS_WAITING
+                returned_question_ids.append(question.id)
+            elif active_count == 0 and final_count < question.required_annotations:
+                question.annotation_status = QUESTION_STATUS_WAITING
+            self._append_review_log(
+                question_id=question.id,
+                actor_user=admin_user,
+                action_code="ADMIN_RECYCLED_ANNOTATION_TASK",
+                detail_json={"task_id": task.id, "assignee_id": task.assignee_id},
+            )
+
+        skipped_count += max(0, len(unique_task_ids) - len(tasks))
+        self.db.commit()
+        return AdminRecycleAnnotationTasksResponse(
+            recycled_count=len(recycled_task_ids),
+            skipped_count=skipped_count,
+            recycled_task_ids=recycled_task_ids,
+            returned_question_ids=returned_question_ids,
+        )
 
     def override_admin_question_review(
         self,
@@ -1645,6 +1787,25 @@ class AnnotationService:
             submitted_at=task.submitted_at,
             question=task.question,
             progress=progress,
+        )
+
+    def _serialize_admin_annotator_task(self, task: AnnotationTask) -> AdminAnnotatorTaskOut:
+        question = task.question
+        assignee = task.assignee
+        return AdminAnnotatorTaskOut(
+            task_id=task.id,
+            question_id=task.question_id,
+            assignee_id=task.assignee_id,
+            assignee_name=(assignee.real_name or assignee.username) if assignee else str(task.assignee_id),
+            task_status=task.task_status,
+            question_status=question.annotation_status,
+            assigned_at=task.assigned_at,
+            started_at=task.started_at,
+            submitted_at=task.submitted_at,
+            source_batch_id=task.source_batch_id,
+            submitted_annotation_count=question.annotation_count,
+            active_annotation_count=self._active_task_count(task.question_id),
+            question=question,
         )
 
     def _serialize_annotator_history_item(
@@ -2398,13 +2559,25 @@ class AnnotationService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="题目不存在。")
         return question
 
-    def _validate_competencies(self, competencies: list[AnnotationCompetencyInput]) -> None:
+    def _validate_competencies(
+        self,
+        competencies: list[AnnotationCompetencyInput],
+        *,
+        max_positive: int | None = None,
+    ) -> None:
         ids = [item.competency_id for item in competencies]
         if len(ids) != len(set(ids)):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="核心素养不能重复。",
             )
+        if max_positive is not None:
+            positive_count = sum(1 for item in competencies if item.level_value > 0)
+            if positive_count > max_positive:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"最多只能标注 {max_positive} 个最核心的素养。",
+                )
         if not ids:
             return
         existing_count = (
@@ -2468,6 +2641,79 @@ class AnnotationService:
             .group_by(Question.annotation_status)
         ).all()
         return {str(status_code): int(count) for status_code, count in rows}
+
+    def _reset_question_for_fresh_annotation(
+        self,
+        *,
+        question: Question,
+        actor_user: User,
+        action_code: str,
+        comment: str,
+    ) -> dict[str, int]:
+        tasks = list(
+            self.db.scalars(
+                select(AnnotationTask)
+                .where(AnnotationTask.question_id == question.id)
+                .where(AnnotationTask.task_status.in_([TASK_STATUS_IN_PROGRESS, TASK_STATUS_SUBMITTED]))
+                .with_for_update()
+            )
+        )
+        for task in tasks:
+            task.task_status = TASK_STATUS_RECALLED
+
+        annotation_ids = list(
+            self.db.scalars(select(Annotation.id).where(Annotation.question_id == question.id))
+        )
+        if annotation_ids:
+            self.db.execute(
+                delete(AnnotationCompetency).where(
+                    AnnotationCompetency.annotation_id.in_(annotation_ids)
+                )
+            )
+            self.db.execute(
+                delete(AnnotationKnowledgePoint).where(
+                    AnnotationKnowledgePoint.annotation_id.in_(annotation_ids)
+                )
+            )
+            self.db.execute(delete(Annotation).where(Annotation.id.in_(annotation_ids)))
+
+        aggregate = self.db.scalar(
+            select(QuestionLabelAggregate).where(QuestionLabelAggregate.question_id == question.id)
+        )
+        if aggregate is not None:
+            self.db.execute(
+                delete(QuestionAggregateCompetency).where(
+                    QuestionAggregateCompetency.aggregate_id == aggregate.id
+                )
+            )
+            aggregate.final_cognitive_level_id = None
+            aggregate.agreement_score = None
+            aggregate.completed_annotation_count = 0
+            aggregate.is_disputed = False
+            aggregate.finalized_at = None
+
+        self._close_open_review_tasks(
+            question.id,
+            review_comment=comment,
+        )
+        question.annotation_count = 0
+        question.annotation_status = QUESTION_STATUS_WAITING
+        self._append_review_log(
+            question_id=question.id,
+            aggregate_id=aggregate.id if aggregate is not None else None,
+            actor_user=actor_user,
+            action_code=action_code,
+            comment=comment,
+            detail_json={
+                "target_status": QUESTION_STATUS_WAITING,
+                "recalled_task_count": len(tasks),
+                "deleted_annotation_count": len(annotation_ids),
+            },
+        )
+        return {
+            "recalled_task_count": len(tasks),
+            "deleted_annotation_count": len(annotation_ids),
+        }
 
     def _reset_question_pool(
         self,

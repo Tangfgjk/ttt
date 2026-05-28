@@ -290,6 +290,8 @@ class ActiveLearningService:
                 )
 
         params_json = payload.model_dump()
+        active_learning_round = self._next_active_learning_round()
+        params_json["active_learning_round"] = active_learning_round
         if baseline_run is not None:
             params_json["baseline_run_id"] = baseline_run.id
 
@@ -309,6 +311,7 @@ class ActiveLearningService:
                 "progress_label": "等待执行",
                 "phase": "queued",
                 "selection_mode": _default_coreset_selection_mode(payload.strategy),
+                "active_learning_round": active_learning_round,
                 "update_mode": payload.update_mode,
                 "baseline_run_id": baseline_run.id if baseline_run else None,
                 "baseline_run_no": baseline_run.run_no if baseline_run else None,
@@ -456,7 +459,7 @@ class ActiveLearningService:
                     )
                 )
                 .order_by(ModelCoresetRun.created_at.desc(), ModelCoresetRun.id.desc())
-                .limit(20)
+                .limit(100)
             ).unique()
         )
 
@@ -852,6 +855,9 @@ class ActiveLearningService:
             item.question_id
             for item in sorted(batch_items, key=lambda row: (row.rank_no, row.id))
         ]
+        round_status_counts = self._question_status_counts(question_ids)
+        round_completed_count = round_status_counts.get(QUESTION_STATUS_COMPLETED, 0)
+        round_unfinished_count = max(0, len(question_ids) - round_completed_count)
         moved_question_ids = [
             int(question_id)
             for question_id in (run.metrics_json or {}).get("moved_question_ids", []) or []
@@ -879,12 +885,84 @@ class ActiveLearningService:
             baseline_run_id=_summary_int(run.metrics_json or {}, "baseline_run_id"),
             baseline_run_no=(run.metrics_json or {}).get("baseline_run_no"),
             baseline_batch_no=(run.metrics_json or {}).get("baseline_batch_no"),
+            active_learning_round=self._active_learning_round_for_run(run),
+            round_completed_count=round_completed_count,
+            round_unfinished_count=round_unfinished_count,
             started_at=run.started_at,
             finished_at=run.finished_at,
             created_at=run.created_at,
             question_ids=question_ids,
             moved_question_ids=moved_question_ids,
         )
+
+    def _question_status_counts(self, question_ids: list[int]) -> dict[str, int]:
+        if not question_ids:
+            return {}
+        rows = self.db.execute(
+            select(Question.annotation_status, func.count(Question.id))
+            .where(Question.id.in_(question_ids))
+            .group_by(Question.annotation_status)
+        ).all()
+        return {str(status_code): int(count) for status_code, count in rows}
+
+    def _next_active_learning_round(self) -> int:
+        runs = list(
+            self.db.scalars(
+                select(ModelCoresetRun)
+                .options(
+                    selectinload(ModelCoresetRun.recommendation_batch).selectinload(
+                        RecommendationBatch.items
+                    )
+                )
+                .where(ModelCoresetRun.status == RUN_STATUS_SUCCESS)
+                .where(ModelCoresetRun.recommendation_batch_id.is_not(None))
+                .order_by(ModelCoresetRun.created_at.asc(), ModelCoresetRun.id.asc())
+            ).unique()
+        )
+        existing_rounds = [round_no for round_no in self._round_map_for_runs(runs).values()]
+        return (max(existing_rounds) if existing_rounds else 0) + 1
+
+    def _active_learning_round_for_run(self, run: ModelCoresetRun) -> int | None:
+        explicit_round = _explicit_active_learning_round(run)
+        if explicit_round is not None:
+            return explicit_round
+        runs = list(
+            self.db.scalars(
+                select(ModelCoresetRun)
+                .options(
+                    selectinload(ModelCoresetRun.recommendation_batch).selectinload(
+                        RecommendationBatch.items
+                    )
+                )
+                .where(ModelCoresetRun.status == RUN_STATUS_SUCCESS)
+                .where(ModelCoresetRun.recommendation_batch_id.is_not(None))
+                .order_by(ModelCoresetRun.created_at.asc(), ModelCoresetRun.id.asc())
+            ).unique()
+        )
+        return self._round_map_for_runs(runs).get(run.id)
+
+    def _round_map_for_runs(self, runs: list[ModelCoresetRun]) -> dict[int, int]:
+        round_by_run_id: dict[int, int] = {}
+        round_by_fingerprint: dict[tuple[int, ...], int] = {}
+        next_round = 1
+        for run in runs:
+            explicit_round = _explicit_active_learning_round(run)
+            fingerprint = _coreset_run_question_fingerprint(run)
+            if explicit_round is not None:
+                round_by_run_id[run.id] = explicit_round
+                if fingerprint:
+                    round_by_fingerprint.setdefault(fingerprint, explicit_round)
+                next_round = max(next_round, explicit_round + 1)
+                continue
+            if not fingerprint:
+                round_by_run_id[run.id] = next_round
+                next_round += 1
+                continue
+            if fingerprint not in round_by_fingerprint:
+                round_by_fingerprint[fingerprint] = next_round
+                next_round += 1
+            round_by_run_id[run.id] = round_by_fingerprint[fingerprint]
+        return round_by_run_id
 
 
 def _linked_model_version(run: ModelTrainingRun | None) -> ModelVersion | None:
@@ -894,6 +972,22 @@ def _linked_model_version(run: ModelTrainingRun | None) -> ModelVersion | None:
     if not versions:
         return None
     return sorted(versions, key=lambda item: (item.created_at, item.id), reverse=True)[0]
+
+
+def _explicit_active_learning_round(run: ModelCoresetRun) -> int | None:
+    for source in (run.params_json or {}, run.metrics_json or {}):
+        value = source.get("active_learning_round")
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+    return None
+
+
+def _coreset_run_question_fingerprint(run: ModelCoresetRun) -> tuple[int, ...]:
+    batch = run.recommendation_batch
+    items = list(getattr(batch, "items", []) or []) if batch is not None else []
+    return tuple(sorted({int(item.question_id) for item in items}))
 
 
 def _training_run_model_type(run: ModelTrainingRun | None) -> str | None:
@@ -1286,6 +1380,8 @@ class _ActiveLearningRunner:
                 f"Target stage={params.target_stage}, competency_count={len(competency_ids)}."
             )
             examples = self._training_examples(params, competency_ids)
+            if params.max_coreset_round:
+                logger.write(f"Using CoreSet rounds <= {params.max_coreset_round}.")
             logger.write(f"Loaded trainable examples: {len(examples)}.")
             if len(examples) < params.min_train_samples:
                 raise RuntimeError(
@@ -1589,6 +1685,7 @@ class _ActiveLearningRunner:
 
             params = CoresetRunCreateRequest.model_validate(run.params_json or {})
             update_mode = params.update_mode
+            active_learning_round = _summary_int(run.params_json or {}, "active_learning_round")
             baseline_run = self._load_incremental_baseline_for_run(run, params.data_scope)
             if update_mode == "incremental" and baseline_run is None:
                 raise RuntimeError(
@@ -1759,6 +1856,14 @@ class _ActiveLearningRunner:
             )
 
             selected_ids = [item.question_id for item in selections]
+            active_learning_round = self._round_for_selected_questions(
+                selected_ids,
+                proposed_round=active_learning_round,
+            )
+            run.params_json = {
+                **(run.params_json or {}),
+                "active_learning_round": active_learning_round,
+            }
             run.selected_count = len(selections)
             update_progress(
                 phase="writing_batch",
@@ -1777,6 +1882,7 @@ class _ActiveLearningRunner:
                 context_json={
                     "source_run_id": run.id,
                     "source_run_no": run.run_no,
+                    "active_learning_round": active_learning_round,
                     "requested_count": run.requested_count,
                     "candidate_count": len(candidates),
                     "current_pool_count": len(candidates),
@@ -1838,6 +1944,7 @@ class _ActiveLearningRunner:
                         "count": run.requested_count,
                         "data_scope": run.data_scope,
                         "update_mode": update_mode,
+                        "active_learning_round": active_learning_round,
                         "baseline_run_id": baseline_run.id if baseline_run else None,
                     },
                     metrics_json={
@@ -1879,6 +1986,7 @@ class _ActiveLearningRunner:
                 selection_mode=selection_mode,
                 update_mode=update_mode,
                 moved_question_ids=moved_question_ids,
+                active_learning_round=active_learning_round,
                 baseline_run_id=baseline_run.id if baseline_run else None,
                 baseline_run_no=baseline_run.run_no if baseline_run else None,
                 baseline_batch_no=baseline_run.recommendation_batch.batch_no
@@ -2109,6 +2217,7 @@ class _ActiveLearningRunner:
         embedding_model_code: str | None = None,
         embedding_model_name: str | None = None,
         moved_question_ids: list[int] | None = None,
+        active_learning_round: int | None = None,
         error_message: str | None = None,
         baseline_run_id: int | None = None,
         baseline_run_no: str | None = None,
@@ -2145,6 +2254,8 @@ class _ActiveLearningRunner:
             metrics["embedding_model_name"] = embedding_model_name
         if moved_question_ids is not None:
             metrics["moved_question_ids"] = moved_question_ids
+        if active_learning_round is not None:
+            metrics["active_learning_round"] = active_learning_round
         if error_message:
             metrics["error_message"] = error_message
         if baseline_run_id is not None:
@@ -2197,6 +2308,7 @@ class _ActiveLearningRunner:
     ) -> list[TrainingExample]:
         label_index = {competency_id: index for index, competency_id in enumerate(competency_ids)}
         examples: dict[int, TrainingExample] = {}
+        allowed_question_ids = self._coreset_question_ids_up_to_round(params.max_coreset_round)
 
         stmt = (
             select(Question, QuestionLabelAggregate)
@@ -2213,6 +2325,8 @@ class _ActiveLearningRunner:
             .where(QuestionContent.stem_text != "")
             .order_by(Question.id.asc())
         )
+        if allowed_question_ids is not None:
+            stmt = stmt.where(Question.id.in_(allowed_question_ids))
         for question, aggregate in self.db.execute(stmt).unique():
             labels = _labels_from_competencies(aggregate.competencies, label_index)
             examples[question.id] = TrainingExample(
@@ -2235,6 +2349,8 @@ class _ActiveLearningRunner:
                 .where(QuestionContent.stem_text != "")
                 .order_by(QuestionGoldLabel.question_id.asc(), QuestionGoldLabel.id.asc())
             )
+            if allowed_question_ids is not None:
+                gold_stmt = gold_stmt.where(QuestionGoldLabel.question_id.in_(allowed_question_ids))
             for gold_label in self.db.scalars(gold_stmt).unique():
                 if gold_label.question_id in examples:
                     continue
@@ -2245,6 +2361,99 @@ class _ActiveLearningRunner:
                 )
 
         return list(examples.values())
+
+    def _coreset_question_ids_up_to_round(self, max_round: int | None) -> set[int] | None:
+        if max_round is None:
+            return None
+        runs = list(
+            self.db.scalars(
+                select(ModelCoresetRun)
+                .options(selectinload(ModelCoresetRun.recommendation_batch).selectinload(RecommendationBatch.items))
+                .where(ModelCoresetRun.status == RUN_STATUS_SUCCESS)
+                .where(ModelCoresetRun.recommendation_batch_id.is_not(None))
+                .order_by(ModelCoresetRun.created_at.asc(), ModelCoresetRun.id.asc())
+            ).unique()
+        )
+        question_ids: set[int] = set()
+        for run in runs:
+            active_round = self._active_learning_round_for_run(run)
+            if active_round is None or active_round > max_round:
+                continue
+            batch = run.recommendation_batch
+            if batch is None:
+                continue
+            question_ids.update(int(item.question_id) for item in batch.items)
+        return question_ids
+
+    def _round_for_selected_questions(
+        self,
+        question_ids: list[int],
+        *,
+        proposed_round: int | None,
+    ) -> int:
+        fingerprint = tuple(sorted(set(int(question_id) for question_id in question_ids)))
+        runs = list(
+            self.db.scalars(
+                select(ModelCoresetRun)
+                .options(
+                    selectinload(ModelCoresetRun.recommendation_batch).selectinload(
+                        RecommendationBatch.items
+                    )
+                )
+                .where(ModelCoresetRun.status == RUN_STATUS_SUCCESS)
+                .where(ModelCoresetRun.recommendation_batch_id.is_not(None))
+                .order_by(ModelCoresetRun.created_at.asc(), ModelCoresetRun.id.asc())
+            ).unique()
+        )
+        round_map = self._round_map_for_runs(runs)
+        for run in runs:
+            if _coreset_run_question_fingerprint(run) == fingerprint:
+                existing_round = round_map.get(run.id)
+                if existing_round is not None:
+                    return existing_round
+        existing_rounds = list(round_map.values())
+        return proposed_round or ((max(existing_rounds) if existing_rounds else 0) + 1)
+
+    def _active_learning_round_for_run(self, run: ModelCoresetRun) -> int | None:
+        explicit_round = _explicit_active_learning_round(run)
+        if explicit_round is not None:
+            return explicit_round
+        runs = list(
+            self.db.scalars(
+                select(ModelCoresetRun)
+                .options(
+                    selectinload(ModelCoresetRun.recommendation_batch).selectinload(
+                        RecommendationBatch.items
+                    )
+                )
+                .where(ModelCoresetRun.status == RUN_STATUS_SUCCESS)
+                .where(ModelCoresetRun.recommendation_batch_id.is_not(None))
+                .order_by(ModelCoresetRun.created_at.asc(), ModelCoresetRun.id.asc())
+            ).unique()
+        )
+        return self._round_map_for_runs(runs).get(run.id)
+
+    def _round_map_for_runs(self, runs: list[ModelCoresetRun]) -> dict[int, int]:
+        round_by_run_id: dict[int, int] = {}
+        round_by_fingerprint: dict[tuple[int, ...], int] = {}
+        next_round = 1
+        for run in runs:
+            explicit_round = _explicit_active_learning_round(run)
+            fingerprint = _coreset_run_question_fingerprint(run)
+            if explicit_round is not None:
+                round_by_run_id[run.id] = explicit_round
+                if fingerprint:
+                    round_by_fingerprint.setdefault(fingerprint, explicit_round)
+                next_round = max(next_round, explicit_round + 1)
+                continue
+            if not fingerprint:
+                round_by_run_id[run.id] = next_round
+                next_round += 1
+                continue
+            if fingerprint not in round_by_fingerprint:
+                round_by_fingerprint[fingerprint] = next_round
+                next_round += 1
+            round_by_run_id[run.id] = round_by_fingerprint[fingerprint]
 
     def _prediction_candidates(
         self,

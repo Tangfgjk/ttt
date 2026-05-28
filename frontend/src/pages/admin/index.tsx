@@ -12,6 +12,7 @@ import {
   Drawer,
   Form,
   InputNumber,
+  Modal,
   Popconfirm,
   Progress,
   Row,
@@ -34,6 +35,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { Key } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { formatBackendDateTime as formatDateTime } from "@/app/date-time";
@@ -55,8 +57,10 @@ import {
   useTrainingRunLogs,
 } from "@/modules/active-learning/hooks";
 import {
+  useAdminAnnotatorTasks,
   useAnnotationPolicy,
   useAnnotationPoolSummary,
+  useRecycleAdminAnnotatorTasks,
   useResetAnnotationPools,
   useRollbackSelectionBatch,
   useSelectionBatches,
@@ -73,6 +77,7 @@ import type {
 } from "@/types/active-learning";
 import type {
   AnnotatorCount,
+  AdminAnnotatorTask,
   AnnotationPolicySyncStatus,
   AnnotationPoolStatus,
   SelectionBatchSummary,
@@ -132,6 +137,7 @@ export function AdminPage() {
   const [selectedCoresetRun, setSelectedCoresetRun] = useState<CoresetRun | null>(
     null,
   );
+  const [selectedAnnotatorTaskIds, setSelectedAnnotatorTaskIds] = useState<Key[]>([]);
   const trainingCardRef = useRef<HTMLDivElement | null>(null);
   const predictionCardRef = useRef<HTMLDivElement | null>(null);
   const [trainingCardHeight, setTrainingCardHeight] = useState<number | undefined>();
@@ -145,6 +151,12 @@ export function AdminPage() {
   } = useAnnotationPoolSummary();
   const { data: selectionStrategies = [] } = useSelectionStrategies();
   const { data: selectionBatches = [] } = useSelectionBatches();
+  const { data: annotatorTasks, isLoading: isAnnotatorTasksLoading } =
+    useAdminAnnotatorTasks(session?.id ?? null, {
+      task_status: "IN_PROGRESS",
+      page: 1,
+      page_size: 100,
+    });
 
   const trainingMutation = useStartTrainingRun();
   const cancelTrainingMutation = useCancelTrainingRun();
@@ -155,6 +167,7 @@ export function AdminPage() {
   const resetPoolsMutation = useResetAnnotationPools();
   const rollbackSelectionBatchMutation = useRollbackSelectionBatch();
   const updateAnnotationPolicyMutation = useUpdateAnnotationPolicy();
+  const recycleAnnotatorTasksMutation = useRecycleAdminAnnotatorTasks();
 
   const latestTrainingRun = latestRun(activeLearning?.training_runs);
   const latestPredictionRun = latestRun(activeLearning?.prediction_runs);
@@ -244,6 +257,46 @@ export function AdminPage() {
       poolSummary?.items.find((summaryItem) => summaryItem.status === item.status)
         ?.count ?? 0,
   }));
+  const coresetRounds = [...(activeLearning?.coreset_runs ?? [])]
+    .filter((item) => item.status === "SUCCESS" && item.active_learning_round)
+    .sort((a, b) => Number(a.active_learning_round) - Number(b.active_learning_round));
+  const maxCoreSetRound = coresetRounds.reduce(
+    (maxRound, item) => Math.max(maxRound, Number(item.active_learning_round ?? 0)),
+    0,
+  );
+  const coresetRoundOptions = Array.from({ length: maxCoreSetRound }, (_, index) => {
+    const round = index + 1;
+    const runs = coresetRounds.filter((item) => Number(item.active_learning_round) <= round);
+    const dedupedRuns = new Map<
+      string,
+      { selectedCount: number; unfinishedCount: number }
+    >();
+    runs.forEach((item) => {
+      const fingerprint = [...item.question_ids].sort((a, b) => a - b).join(",");
+      if (!fingerprint) return;
+      const current = dedupedRuns.get(fingerprint);
+      dedupedRuns.set(fingerprint, {
+        selectedCount: item.question_ids.length,
+        unfinishedCount: Math.max(
+          current?.unfinishedCount ?? 0,
+          item.round_unfinished_count,
+        ),
+      });
+    });
+    const selectedCount = [...dedupedRuns.values()].reduce(
+      (sum, item) => sum + item.selectedCount,
+      0,
+    );
+    const unfinishedCount = [...dedupedRuns.values()].reduce(
+      (sum, item) => sum + item.unfinishedCount,
+      0,
+    );
+    return {
+      value: round,
+      label: `使用前 ${round} 轮（选题 ${selectedCount}，未完成 ${unfinishedCount}）`,
+      unfinishedCount,
+    };
+  });
 
   const currentAnnotatorCount = annotationPolicy?.annotator_count ?? 3;
   const policySyncStatus = annotationPolicy?.sync_status;
@@ -289,9 +342,23 @@ export function AdminPage() {
     max_length: number;
     min_train_samples: number;
     device: "auto" | "cpu" | "cuda";
+    max_coreset_round?: number | null;
   }) => {
+    if (values.max_coreset_round) {
+      const firstIncompleteRound = coresetRoundOptions.find(
+        (item) => item.value <= Number(values.max_coreset_round) && item.unfinishedCount > 0,
+      );
+      if (firstIncompleteRound) {
+        Modal.warning({
+          title: `第 ${firstIncompleteRound.value} 轮数据尚未标注完成`,
+          content: "请先完成该轮及之前轮次的标注/复核，再启动使用前几轮数据的模型训练。",
+        });
+        return;
+      }
+    }
     const result = await trainingMutation.mutateAsync({
       ...values,
+      max_coreset_round: values.max_coreset_round ?? null,
       random_seed: 42,
       include_gold_labels: includeGoldLabels,
       triggered_by_user_id: session?.id ?? null,
@@ -381,6 +448,18 @@ export function AdminPage() {
     message.success(
       `已撤回批次 ${result.batch_no}：回收标注中 ${result.recalled_in_progress_count} 题，退回待标注 ${result.returned_waiting_count} 题。`,
     );
+  };
+
+  const handleRecycleSelectedAnnotatorTasks = async () => {
+    if (!session || selectedAnnotatorTaskIds.length <= 0) return;
+    const result = await recycleAnnotatorTasksMutation.mutateAsync({
+      admin_user_id: session.id,
+      task_ids: selectedAnnotatorTaskIds.map(Number),
+    });
+    message.success(
+      `已回收 ${result.recycled_count} 个领取任务，${result.returned_question_ids.length} 道题回到待标注池`,
+    );
+    setSelectedAnnotatorTaskIds([]);
   };
 
   const scrollToSection = (sectionId: string) => {
@@ -551,6 +630,12 @@ export function AdminPage() {
           <Typography.Text>
             候选 {row.candidate_count} / 选中 {row.selected_count} / 进入待标注池 {row.moved_count}
           </Typography.Text>
+          {row.active_learning_round ? (
+            <Typography.Text type="secondary">
+              第 {row.active_learning_round} 轮：已完成 {row.round_completed_count}，未完成{" "}
+              {row.round_unfinished_count}
+            </Typography.Text>
+          ) : null}
           <Typography.Text type="secondary">
             模式：{String(row.metrics_json?.selection_mode ?? "-")}
           </Typography.Text>
@@ -573,6 +658,75 @@ export function AdminPage() {
             查看题目
           </Button>
         </Space>
+      ),
+    },
+  ];
+
+  const annotatorTaskColumns = [
+    {
+      title: "标注员",
+      key: "assignee",
+      render: (_value: unknown, row: AdminAnnotatorTask) => (
+        <Space direction="vertical" size={0}>
+          <Typography.Text strong>{row.assignee_name}</Typography.Text>
+          <Typography.Text type="secondary">用户 #{row.assignee_id}</Typography.Text>
+        </Space>
+      ),
+    },
+    {
+      title: "题目",
+      key: "question",
+      render: (_value: unknown, row: AdminAnnotatorTask) => (
+        <Space direction="vertical" size={0}>
+          <Typography.Text strong>题目 #{row.question_id}</Typography.Text>
+          <Typography.Text type="secondary" ellipsis style={{ maxWidth: 420 }}>
+            {row.question.content?.stem_text || "暂无题干"}
+          </Typography.Text>
+        </Space>
+      ),
+    },
+    {
+      title: "状态",
+      key: "status",
+      render: (_value: unknown, row: AdminAnnotatorTask) => (
+        <Space direction="vertical" size={0}>
+          <Tag color={annotationStatusColorMap[row.question_status]}>
+            {annotationStatusLabelMap[row.question_status]}
+          </Tag>
+          <Typography.Text type="secondary">
+            已提交 {row.submitted_annotation_count} / 领取中 {row.active_annotation_count}
+          </Typography.Text>
+        </Space>
+      ),
+    },
+    {
+      title: "领取时间",
+      dataIndex: "assigned_at",
+      key: "assigned_at",
+      render: (value: string) => formatDateTime(value),
+    },
+    {
+      title: "操作",
+      key: "actions",
+      render: (_value: unknown, row: AdminAnnotatorTask) => (
+        <Popconfirm
+          title="回收这个领取任务？"
+          description="该题会回到待标注池，其他标注员可以重新领取。"
+          okText="确认回收"
+          cancelText="取消"
+          onConfirm={() =>
+            recycleAnnotatorTasksMutation.mutateAsync({
+              admin_user_id: session?.id ?? 0,
+              task_ids: [row.task_id],
+            }).then((result) => {
+              message.success(`已回收 ${result.recycled_count} 个任务`);
+            })
+          }
+        >
+          <Button size="small" danger loading={recycleAnnotatorTasksMutation.isPending}>
+            回收
+          </Button>
+        </Popconfirm>
       ),
     },
   ];
@@ -619,6 +773,7 @@ export function AdminPage() {
         <Space size={[8, 8]} wrap>
           {[
             { id: "admin-policy", label: "标注策略" },
+            { id: "admin-annotator-tasks", label: "领取管理" },
             { id: "admin-training", label: "训练模型" },
             { id: "admin-pools", label: "题池治理" },
             { id: "admin-coreset-history", label: "CoreSet 历史任务" },
@@ -730,6 +885,53 @@ export function AdminPage() {
         ))}
       </Row>
 
+      <Card
+        id="admin-annotator-tasks"
+        className="page-section-anchor"
+        title="标注领取管理"
+        extra={
+          <Popconfirm
+            title="批量回收选中的领取任务？"
+            description="选中的题目会回到待标注池，供其他标注员重新领取。"
+            okText="确认回收"
+            cancelText="取消"
+            disabled={selectedAnnotatorTaskIds.length <= 0}
+            onConfirm={handleRecycleSelectedAnnotatorTasks}
+          >
+            <Button
+              danger
+              disabled={selectedAnnotatorTaskIds.length <= 0}
+              loading={recycleAnnotatorTasksMutation.isPending}
+            >
+              回收选中任务
+            </Button>
+          </Popconfirm>
+        }
+        style={{ boxShadow: token.boxShadowTertiary }}
+      >
+        <Alert
+          type="info"
+          showIcon
+          message="这里展示标注员已领取但尚未提交的题目。回收后不会删除已提交标注，只会释放长期占用的领取任务。"
+          style={{ marginBottom: 16 }}
+        />
+        <Table
+          rowKey="task_id"
+          loading={isAnnotatorTasksLoading}
+          dataSource={annotatorTasks?.items ?? []}
+          columns={annotatorTaskColumns}
+          pagination={{
+            pageSize: 10,
+            total: annotatorTasks?.meta.total ?? 0,
+            showSizeChanger: false,
+          }}
+          rowSelection={{
+            selectedRowKeys: selectedAnnotatorTaskIds,
+            onChange: setSelectedAnnotatorTaskIds,
+          }}
+        />
+      </Card>
+
       <Row gutter={[16, 16]} align="stretch">
         <Col xs={24} xl={14}>
           <div
@@ -792,6 +994,7 @@ export function AdminPage() {
                 max_length: 256,
                 min_train_samples: 5,
                 device: "auto",
+                max_coreset_round: null,
                 include_gold_labels: includeGoldLabels,
               }}
               onFinish={handleStartTraining}
@@ -876,6 +1079,15 @@ export function AdminPage() {
                         { value: "cpu", label: "CPU" },
                         { value: "cuda", label: "CUDA" },
                       ]}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} md={8}>
+                  <Form.Item label="CoreSet 训练范围" name="max_coreset_round">
+                    <Select
+                      allowClear
+                      placeholder="默认使用全部已完成标注"
+                      options={coresetRoundOptions}
                     />
                   </Form.Item>
                 </Col>

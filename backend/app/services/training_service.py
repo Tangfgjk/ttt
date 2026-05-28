@@ -251,6 +251,11 @@ class TrainingService:
 
         for question in module:
             answer = answer_map.get(question.question_id)
+            if answer and sum(1 for item in answer.competencies if item.level_value > 0) > 3:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="培训作答每题最多只能标注 3 个最核心的素养。",
+                )
             predicted_levels = self._competency_level_map(
                 answer.competencies if answer else [],
                 allowed_competency_ids=stage_ids,

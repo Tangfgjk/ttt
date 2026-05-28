@@ -1,6 +1,9 @@
 import { apiClient } from "@/services/api-client";
 import type {
   AdminAggregateOverrideRequest,
+  AdminAnnotatorTaskListResponse,
+  AdminRecycleAnnotationTasksRequest,
+  AdminRecycleAnnotationTasksResponse,
   AnnotationPolicySettings,
   AnnotationPolicyUpdateRequest,
   AnnotationPolicyUpdateResponse,
@@ -19,6 +22,8 @@ import type {
   ClaimReviewTaskRequest,
   ClaimReviewTaskResponse,
   PoolSummaryResponse,
+  ReturnReviewTasksRequest,
+  ReturnReviewTasksResponse,
   ReviewTaskListResponse,
   SelectionBatchRollbackRequest,
   SelectionBatchRollbackResponse,
@@ -178,6 +183,36 @@ export async function getReviewTasks(params: {
 export async function submitReviewTask(taskId: number, payload: SubmitReviewTaskRequest) {
   const response = await apiClient.post<SubmitReviewTaskResponse>(
     `/annotations/review-tasks/${taskId}/submit`,
+    payload,
+  );
+  return response.data;
+}
+
+export async function returnReviewTasksForReannotation(payload: ReturnReviewTasksRequest) {
+  const response = await apiClient.post<ReturnReviewTasksResponse>(
+    "/annotations/review-tasks/return-for-reannotation",
+    payload,
+  );
+  return response.data;
+}
+
+export async function getAdminAnnotatorTasks(params: {
+  admin_user_id: number;
+  task_status?: string | null;
+  annotator_user_id?: number | null;
+  page?: number;
+  page_size?: number;
+}) {
+  const response = await apiClient.get<AdminAnnotatorTaskListResponse>(
+    "/annotations/admin/annotator-tasks",
+    { params },
+  );
+  return response.data;
+}
+
+export async function recycleAdminAnnotatorTasks(payload: AdminRecycleAnnotationTasksRequest) {
+  const response = await apiClient.post<AdminRecycleAnnotationTasksResponse>(
+    "/annotations/admin/annotator-tasks/recycle",
     payload,
   );
   return response.data;

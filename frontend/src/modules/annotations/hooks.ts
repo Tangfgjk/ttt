@@ -4,6 +4,7 @@ import {
   approveAdminQuestionReview,
   claimReviewTasks,
   claimAnnotationTasks,
+  getAdminAnnotatorTasks,
   getAnnotationPolicy,
   getAnnotatorHistory,
   getAdminQuestionReview,
@@ -16,8 +17,10 @@ import {
   overrideAdminQuestionReview,
   rejectAdminQuestionReview,
   reconcileReviewTasksWithCurrentRules,
+  recycleAdminAnnotatorTasks,
   reviseAnnotationTask,
   resetAnnotationPools,
+  returnReviewTasksForReannotation,
   rollbackSelectionBatch,
   selectQuestionsForAnnotation,
   submitAnnotationTask,
@@ -26,6 +29,7 @@ import {
 } from "@/services/annotations";
 import type {
   AdminAggregateOverrideRequest,
+  AdminRecycleAnnotationTasksRequest,
   AnnotationPolicyUpdateRequest,
   AdminReviewDecisionRequest,
   AdminSelectionRequest,
@@ -35,6 +39,7 @@ import type {
   ClaimAnnotationRequest,
   ClaimReviewTaskRequest,
   PoolSummaryResponse,
+  ReturnReviewTasksRequest,
   SelectionBatchRollbackRequest,
   SubmitAnnotationRequest,
   SubmitReviewTaskRequest,
@@ -279,6 +284,52 @@ export function useSubmitReviewTask(taskId: number | null) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (payload: SubmitReviewTaskRequest) => submitReviewTask(taskId as number, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["annotations"] });
+      queryClient.invalidateQueries({ queryKey: ["questions"] });
+    },
+  });
+}
+
+export function useReturnReviewTasksForReannotation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: ReturnReviewTasksRequest) => returnReviewTasksForReannotation(payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["annotations"] });
+      queryClient.invalidateQueries({ queryKey: ["questions"] });
+    },
+  });
+}
+
+export function useAdminAnnotatorTasks(
+  adminUserId: number | null,
+  params?: {
+    task_status?: string | null;
+    annotator_user_id?: number | null;
+    page?: number;
+    page_size?: number;
+  },
+) {
+  return useQuery({
+    queryKey: ["annotations", "admin", "annotator-tasks", adminUserId, params],
+    queryFn: () =>
+      getAdminAnnotatorTasks({
+        admin_user_id: adminUserId as number,
+        task_status: params?.task_status ?? "IN_PROGRESS",
+        annotator_user_id: params?.annotator_user_id,
+        page: params?.page ?? 1,
+        page_size: params?.page_size ?? 50,
+      }),
+    enabled: adminUserId !== null,
+    refetchInterval: 3000,
+  });
+}
+
+export function useRecycleAdminAnnotatorTasks() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: AdminRecycleAnnotationTasksRequest) => recycleAdminAnnotatorTasks(payload),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["annotations"] });
       queryClient.invalidateQueries({ queryKey: ["questions"] });

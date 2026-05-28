@@ -38,6 +38,7 @@ import {
   useAutoReconcileReviewTasks,
   useClaimReviewTasks,
   useReviewTasks,
+  useReturnReviewTasksForReannotation,
   useSubmitReviewTask,
 } from "@/modules/annotations/hooks";
 import { useCompetencies, useQuestionDetail } from "@/modules/question-bank/hooks";
@@ -122,6 +123,7 @@ export function ReviewPage() {
   const { data: competencies } = useCompetencies();
   const claimMutation = useClaimReviewTasks();
   const reconcileMutation = useAutoReconcileReviewTasks();
+  const returnMutation = useReturnReviewTasksForReannotation();
   const activeTask = useMemo(
     () => taskData?.items.find((item) => item.id === activeTaskId) ?? taskData?.items[0] ?? null,
     [activeTaskId, taskData?.items],
@@ -278,6 +280,34 @@ export function ReviewPage() {
     );
   };
 
+  const handleReturnAll = () => {
+    if (!reviewerId) {
+      message.error("请先登录");
+      return;
+    }
+    const count = taskData?.items.length ?? 0;
+    if (count <= 0) {
+      message.info("当前没有已领取的复核题可打回");
+      return;
+    }
+    Modal.confirm({
+      title: "确认打回全部已领取复核题？",
+      icon: <ExclamationCircleOutlined />,
+      content:
+        "此操作会清空这些题目已有的标注结果，召回原标注任务，并把题目重新放回待标注池，供标注员重新领取。",
+      okText: "确认全部打回",
+      okButtonProps: { danger: true },
+      cancelText: "取消",
+      onOk: async () => {
+        const result = await returnMutation.mutateAsync({ reviewer_user_id: reviewerId });
+        message.success(
+          `已打回 ${result.returned_count} 道题，清空 ${result.deleted_annotation_count} 条标注`,
+        );
+        setActiveTaskId(null);
+      },
+    });
+  };
+
   const handleSubmit = async (values: ReviewFormValues) => {
     if (!reviewerId || !activeTask) return;
     const competencyValues = values.competencies ?? {};
@@ -319,6 +349,15 @@ export function ReviewPage() {
               onClick={handleAutoReconcile}
             >
               按新规则清理可自动裁决题
+            </Button>
+            <Button
+              danger
+              icon={<UnlockOutlined />}
+              loading={returnMutation.isPending}
+              onClick={handleReturnAll}
+              disabled={!taskData?.items.length}
+            >
+              一键打回全部已领取复核题
             </Button>
           </Space>
           <Typography.Text type="secondary">

@@ -29,6 +29,7 @@ export type TrainingRunCreateRequest = {
   include_gold_labels: boolean;
   min_train_samples: number;
   device: "auto" | "cpu" | "cuda";
+  max_coreset_round?: number | null;
 };
 
 export type TrainingEpoch = {
@@ -214,6 +215,9 @@ export type CoresetRun = {
   baseline_run_id?: number | null;
   baseline_run_no?: string | null;
   baseline_batch_no?: string | null;
+  active_learning_round?: number | null;
+  round_completed_count: number;
+  round_unfinished_count: number;
   started_at?: string | null;
   finished_at?: string | null;
   created_at: string;

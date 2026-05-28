@@ -108,6 +108,7 @@ const menuItems: AppMenuItem[] = [
     label: "管理后台",
     roles: ["admin"],
     children: [
+      { key: "/admin#admin-annotator-tasks", label: "标注领取管理" },
       { key: "/admin#admin-training", label: "训练模型" },
       { key: "/admin#admin-pools", label: "题池治理" },
       { key: "/admin#admin-coreset-history", label: "CoreSet 历史任务" },

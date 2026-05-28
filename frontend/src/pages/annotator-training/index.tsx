@@ -62,6 +62,11 @@ type TrainingPanelKey = "guide" | "practice" | "result";
 type TrainingResultLike = TrainingAttemptResponse | TrainingSubmitResponse;
 
 const LEVEL_LABELS = ["0级", "1级", "2级", "3级"];
+const MAX_SELECTED_COMPETENCIES = 3;
+
+function countSelectedCompetencies(values?: Record<number, number>) {
+  return Object.values(values ?? {}).filter((value) => Number(value) > 0).length;
+}
 
 function scopeLabel(scope: string) {
   if (scope === "both") return "已通过初中 / 高中培训";
@@ -247,6 +252,15 @@ export function AnnotatorTrainingPage() {
       return;
     }
     const answerValues = mergeCurrentAnswers();
+    const overflowQuestion = module.questions.find(
+      (question) =>
+        countSelectedCompetencies(answerValues[question.question_id]) > MAX_SELECTED_COMPETENCIES,
+    );
+    if (overflowQuestion) {
+      message.warning(`每题最多标注 ${MAX_SELECTED_COMPETENCIES} 个最核心的素养，请先调整第 ${module.questions.indexOf(overflowQuestion) + 1} 题`);
+      setCurrentQuestionIndex(module.questions.indexOf(overflowQuestion));
+      return;
+    }
     const result = await submitMutation.mutateAsync({
       user_id: userId,
       stage,
@@ -389,7 +403,30 @@ export function AnnotatorTrainingPage() {
           isSubmitting={submitMutation.isPending}
           hasTrainingAccess={status?.training_scope !== "none"}
           onSubmit={handleSubmit}
-          onValuesChange={(_, allValues) => {
+          onValuesChange={(changedValues, allValues) => {
+            const changedAnswers = changedValues.answers ?? {};
+            const changedQuestionId = Number(Object.keys(changedAnswers)[0]);
+            const changedCompetencyId = Number(
+              Object.keys(changedAnswers[changedQuestionId] ?? {})[0],
+            );
+            if (
+              changedQuestionId &&
+              changedCompetencyId &&
+              countSelectedCompetencies(allValues.answers?.[changedQuestionId]) >
+                MAX_SELECTED_COMPETENCIES
+            ) {
+              form.setFieldsValue({
+                answers: {
+                  ...(allValues.answers ?? {}),
+                  [changedQuestionId]: {
+                    ...(allValues.answers?.[changedQuestionId] ?? {}),
+                    [changedCompetencyId]: 0,
+                  },
+                },
+              });
+              message.warning(`每题最多标注 ${MAX_SELECTED_COMPETENCIES} 个最核心的素养`);
+              return;
+            }
             setAnswerDraft((current) => ({
               ...current,
               ...(allValues.answers ?? {}),
@@ -722,6 +759,11 @@ function PracticePanel({
                 {currentQuestion.coach_tip ? (
                   <Alert type="info" showIcon message={currentQuestion.coach_tip} />
                 ) : null}
+                <Alert
+                  type="info"
+                  showIcon
+                  message={`请只标注 ${MAX_SELECTED_COMPETENCIES} 个以内最核心的素养，超过后系统会自动撤回本次选择。`}
+                />
                 <div className="training-answer-grid">
                   {visibleCompetencies.map((item) => {
                     const definition = competencyDefinitionMap.get(item.code);

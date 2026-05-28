@@ -4,17 +4,14 @@ import {
   Button,
   Card,
   Col,
-  Descriptions,
   Drawer,
   Empty,
   Form,
   InputNumber,
   List,
-  Popconfirm,
   Progress,
   Radio,
   Row,
-  Segmented,
   Space,
   Tag,
   Typography,
@@ -24,6 +21,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { useAuthStore } from "@/app/store/auth-store";
 import { CompetencyHelpPopover } from "@/components/competency-help-popover";
+import { QuestionDetailSections } from "@/components/question-detail-sections";
 import { QuestionRichText } from "@/components/question-rich-text";
 import {
   getAnnotationStatusColor,
@@ -34,14 +32,12 @@ import {
   useAnnotationPoolSummary,
   useAnnotationTasks,
   useClaimAnnotationTasks,
-  useReviseAnnotationTask,
   useSubmitAnnotationTask,
 } from "@/modules/annotations/hooks";
 import { useCompetencies, useQuestionDetail } from "@/modules/question-bank/hooks";
 import { useTrainingModule } from "@/modules/training/hooks";
 import type { CompetencyItem } from "@/types/dictionary";
 import type { AnnotationTask } from "@/types/annotations";
-import type { QuestionDetail } from "@/types/question";
 import type { TrainingStage } from "@/types/training";
 
 type AnnotationFormValues = {
@@ -50,28 +46,13 @@ type AnnotationFormValues = {
   competency_confidence_levels?: Record<number, number>;
 };
 
-type SubmittedAnnotationDraft = {
-  task: AnnotationTask;
-  values: {
-    confidence_level: number;
-    competencies: Record<number, number>;
-    competency_confidence_levels: Record<number, number>;
-  };
-  canRevise: boolean;
-};
-
 const CONFIDENCE_OPTIONS = [
   { label: "高", value: 5 },
   { label: "中", value: 3 },
   { label: "低", value: 1 },
 ];
 
-const DETAIL_VIEW_MODE_OPTIONS = [
-  { label: "渲染视图", value: "rendered" },
-  { label: "原始文本", value: "raw" },
-] as const;
-
-type DetailViewMode = (typeof DETAIL_VIEW_MODE_OPTIONS)[number]["value"];
+const MAX_SELECTED_COMPETENCIES = 3;
 
 const JUNIOR_COMPETENCY_CODES = new Set([
   "abstraction",
@@ -111,6 +92,10 @@ function resolveEduStage(task: AnnotationTask | null) {
   return null;
 }
 
+function countSelectedCompetencies(values?: Record<number, number>) {
+  return Object.values(values ?? {}).filter((value) => Number(value) > 0).length;
+}
+
 function filterCompetenciesByStage(
   items: CompetencyItem[] | undefined,
   eduStage: string | null,
@@ -127,133 +112,23 @@ function filterCompetenciesByStage(
   return items;
 }
 
-function RawTextBlock({ value, emptyLabel = "暂无内容" }: { value?: string | null; emptyLabel?: string }) {
-  if (!value) {
-    return <Typography.Text type="secondary">{emptyLabel}</Typography.Text>;
-  }
-  return <pre className="question-raw-block">{value}</pre>;
-}
-
-function renderDifficultyStats(detail: QuestionDetail) {
-  if (!detail.difficulty_level_stats.length) {
-    return <Typography.Text type="secondary">暂无难度等级统计</Typography.Text>;
-  }
-
-  return (
-    <Space size={[8, 8]} wrap>
-      {detail.difficulty_level_stats.map((item) => (
-        <Tag key={item.level} color={detail.source_difficulty_level === item.level ? "processing" : "default"}>
-          {`L${item.level} · ${item.question_count}题`}
-        </Tag>
-      ))}
-    </Space>
-  );
-}
-
-function AnnotationQuestionDetail({
-  detail,
-  viewMode,
-  onViewModeChange,
-}: {
-  detail: QuestionDetail;
-  viewMode: DetailViewMode;
-  onViewModeChange: (value: DetailViewMode) => void;
-}) {
-  const isRawMode = viewMode === "raw";
-
-  return (
-    <Space direction="vertical" size={20} style={{ width: "100%" }}>
-      <Space style={{ justifyContent: "space-between", width: "100%" }} wrap>
-        <Typography.Title level={5} style={{ margin: 0 }}>
-          题目详情
-        </Typography.Title>
-        <Segmented
-          options={DETAIL_VIEW_MODE_OPTIONS.map((item) => ({ label: item.label, value: item.value }))}
-          value={viewMode}
-          onChange={(value: string | number) => onViewModeChange(value as DetailViewMode)}
-        />
-      </Space>
-
-      <Descriptions
-        title="基础信息"
-        bordered
-        size="small"
-        column={2}
-        items={[
-          { key: "id", label: "题目 ID", children: detail.id },
-          { key: "subject", label: "学科", children: detail.subject.name },
-          { key: "grade", label: "年级", children: detail.grade?.grade_name ?? "-" },
-          { key: "type", label: "题型", children: detail.question_type?.name ?? "-" },
-          {
-            key: "annotation_status",
-            label: "标注状态",
-            children: (
-              <Tag color={getAnnotationStatusColor(detail.annotation_status)}>
-                {getAnnotationStatusLabel(detail.annotation_status)}
-              </Tag>
-            ),
-          },
-          { key: "source_status", label: "来源状态", children: detail.source_status },
-          { key: "difficulty", label: "难度", children: detail.difficulty_level ?? "-" },
-          { key: "blank_count", label: "填空数量", children: detail.blank_count },
-          { key: "annotation_count", label: "已标注人数", children: detail.annotation_count },
-          { key: "required_annotations", label: "要求标注人数", children: detail.required_annotations },
-        ]}
-      />
-
-      <Card size="small" title="完整题干">
-        {isRawMode ? (
-          <RawTextBlock value={detail.content?.stem_text} emptyLabel="暂无题干" />
-        ) : (
-          <QuestionRichText
-            html={detail.content?.stem_html}
-            text={detail.content?.stem_text}
-            emptyLabel="暂无题干"
-          />
-        )}
-      </Card>
-
-      <Card size="small" title="答案">
-        {isRawMode ? (
-          <RawTextBlock value={detail.content?.answer_text} />
-        ) : (
-          <QuestionRichText text={detail.content?.answer_text} />
-        )}
-      </Card>
-
-      <Card size="small" title="解析">
-        {isRawMode ? (
-          <RawTextBlock value={detail.content?.solution_text} />
-        ) : (
-          <QuestionRichText text={detail.content?.solution_text} />
-        )}
-      </Card>
-    </Space>
-  );
-}
-
 export function AnnotatePage() {
   const [form] = Form.useForm();
   const session = useAuthStore((state) => state.session);
   const userId = session?.id ?? null;
   const [claimCount, setClaimCount] = useState(50);
   const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
-  const [detailViewMode, setDetailViewMode] = useState<DetailViewMode>("rendered");
   const { data: taskData, isLoading } = useAnnotationTasks(userId, "IN_PROGRESS");
   const { data: poolSummary } = useAnnotationPoolSummary();
   const { data: competencies } = useCompetencies();
   const claimMutation = useClaimAnnotationTasks();
   const [activeTaskId, setActiveTaskId] = useState<number | null>(null);
-  const [lastSubmittedTask, setLastSubmittedTask] = useState<SubmittedAnnotationDraft | null>(null);
-  const [isRevisingLastSubmitted, setIsRevisingLastSubmitted] = useState(false);
   const activeTask = useMemo(
     () => taskData?.items.find((item) => item.id === activeTaskId) ?? taskData?.items[0] ?? null,
     [activeTaskId, taskData?.items],
   );
-  const displayTask = isRevisingLastSubmitted ? lastSubmittedTask?.task ?? null : activeTask;
+  const displayTask = activeTask;
   const submitMutation = useSubmitAnnotationTask(activeTask?.id ?? null);
-  const reviseMutation = useReviseAnnotationTask(lastSubmittedTask?.task.id ?? null);
-  const activeMutation = isRevisingLastSubmitted ? reviseMutation : submitMutation;
   const activeEduStage = useMemo(() => resolveEduStage(displayTask), [displayTask]);
   const visibleCompetencies = useMemo(
     () => filterCompetenciesByStage(competencies, activeEduStage),
@@ -273,31 +148,13 @@ export function AnnotatePage() {
   const questionDetailQuery = useQuestionDetail(displayTask?.question_id ?? null);
 
   useEffect(() => {
-    if (!isRevisingLastSubmitted && activeTask && activeTask.id !== activeTaskId) {
+    if (activeTask && activeTask.id !== activeTaskId) {
       setActiveTaskId(activeTask.id);
     }
-  }, [activeTask, activeTaskId, isRevisingLastSubmitted]);
+  }, [activeTask, activeTaskId]);
 
   useEffect(() => {
     if (!displayTask || !visibleCompetencies.length) {
-      return;
-    }
-    if (isRevisingLastSubmitted && lastSubmittedTask?.task.id === displayTask.id) {
-      form.setFieldsValue({
-        confidence_level: lastSubmittedTask.values.confidence_level,
-        competencies: Object.fromEntries(
-          visibleCompetencies.map((item) => [
-            item.id,
-            lastSubmittedTask.values.competencies[item.id] ?? 0,
-          ]),
-        ),
-        competency_confidence_levels: Object.fromEntries(
-          visibleCompetencies.map((item) => [
-            item.id,
-            lastSubmittedTask.values.competency_confidence_levels[item.id] ?? 5,
-          ]),
-        ),
-      });
       return;
     }
     form.setFieldsValue({
@@ -310,8 +167,6 @@ export function AnnotatePage() {
   }, [
     displayTask?.id,
     form,
-    isRevisingLastSubmitted,
-    lastSubmittedTask,
     visibleCompetencies,
   ]);
 
@@ -351,45 +206,55 @@ export function AnnotatePage() {
       return;
     }
     const competencyValues = values.competencies ?? {};
+    if (countSelectedCompetencies(competencyValues) > MAX_SELECTED_COMPETENCIES) {
+      message.warning(`最多只能标注 ${MAX_SELECTED_COMPETENCIES} 个最核心的素养`);
+      return;
+    }
     const confidenceValues = values.competency_confidence_levels ?? {};
     const competencyPayload = visibleCompetencies.map((item) => ({
       competency_id: item.id,
       level_value: competencyValues[item.id] ?? 0,
       confidence_level: confidenceValues[item.id] ?? 5,
     }));
-    const normalizedValues = {
-      confidence_level: values.confidence_level ?? 5,
-      competencies: Object.fromEntries(
-        visibleCompetencies.map((item) => [item.id, competencyValues[item.id] ?? 0]),
-      ),
-      competency_confidence_levels: Object.fromEntries(
-        visibleCompetencies.map((item) => [item.id, confidenceValues[item.id] ?? 5]),
-      ),
-    };
-    const result = await activeMutation.mutateAsync({
-      annotator_user_id: userId,
-      cognitive_level_id: null,
-      competencies: competencyPayload,
-    });
-    setLastSubmittedTask({
-      task: displayTask,
-      values: normalizedValues,
-      canRevise: result.question_status === "WAITING" || result.question_status === "IN_PROGRESS",
-    });
+    let result;
+    try {
+      result = await submitMutation.mutateAsync({
+        annotator_user_id: userId,
+        cognitive_level_id: null,
+        competencies: competencyPayload,
+      });
+    } catch (error) {
+      const detail = (error as { response?: { data?: { detail?: string } }; message?: string })
+        .response?.data?.detail;
+      message.error(detail || (error as Error).message || "提交失败，请稍后重试");
+      return;
+    }
     message.success(
-      isRevisingLastSubmitted
-        ? `已更新上一题标注，当前 ${result.annotation_count}/${result.required_annotations}`
-        : result.is_disputed
-          ? "已提交，当前题目存在分歧，已进入待复核池"
-          : `已提交，当前 ${result.annotation_count}/${result.required_annotations}`,
+      result.is_disputed
+        ? "已提交，当前题目存在分歧，已进入待复核池"
+        : `已提交，当前 ${result.annotation_count}/${result.required_annotations}`,
     );
     form.resetFields();
-    if (isRevisingLastSubmitted) {
-      setIsRevisingLastSubmitted(false);
-      setActiveTaskId(activeTask?.id ?? null);
-    } else {
-      setActiveTaskId(null);
+    setActiveTaskId(null);
+  };
+
+  const handleValuesChange = (
+    changedValues: Partial<AnnotationFormValues>,
+    allValues: AnnotationFormValues,
+  ) => {
+    if (countSelectedCompetencies(allValues.competencies) <= MAX_SELECTED_COMPETENCIES) {
+      return;
     }
+    const changedCompetencyId = Number(Object.keys(changedValues.competencies ?? {})[0]);
+    if (changedCompetencyId) {
+      form.setFieldsValue({
+        competencies: {
+          ...(allValues.competencies ?? {}),
+          [changedCompetencyId]: 0,
+        },
+      });
+    }
+    message.warning(`每题最多标注 ${MAX_SELECTED_COMPETENCIES} 个最核心的素养`);
   };
 
   return (
@@ -428,7 +293,6 @@ export function AnnotatePage() {
               renderItem={(item: AnnotationTask) => (
                 <List.Item
                   onClick={() => {
-                    setIsRevisingLastSubmitted(false);
                     setActiveTaskId(item.id);
                   }}
                   style={{
@@ -469,7 +333,6 @@ export function AnnotatePage() {
                   {displayTask.question.question_type ? (
                     <Tag>{displayTask.question.question_type.name}</Tag>
                   ) : null}
-                  {isRevisingLastSubmitted ? <Tag color="orange">正在修改上一题</Tag> : null}
                   <Tag color="processing">
                     已提交 {displayTask.progress.submitted_annotation_count}/
                     {displayTask.progress.required_annotations}
@@ -505,50 +368,28 @@ export function AnnotatePage() {
             {!displayTask ? (
               <Alert type="info" showIcon message="领取任务后即可填写认知层级和核心素养矩阵。" />
             ) : (
-              <Form form={form} layout="vertical" onFinish={handleSubmit}>
-                {lastSubmittedTask?.canRevise ? (
-                  <Alert
-                    type={isRevisingLastSubmitted ? "warning" : "info"}
-                    showIcon
-                    message={
-                      isRevisingLastSubmitted
-                        ? "正在修改上一题，重新提交后会覆盖你刚才的标注。"
-                        : "刚提交的上一题可返回修改，直到该题进入聚合或复核。"
-                    }
-                    action={
-                      isRevisingLastSubmitted ? (
-                        <Button
-                          size="small"
-                          onClick={() => {
-                            setIsRevisingLastSubmitted(false);
-                            setActiveTaskId(null);
-                          }}
-                        >
-                          取消修改
-                        </Button>
-                      ) : (
-                        <Popconfirm
-                          title="返回上一题修改？"
-                          description="当前会切回你刚提交的上一题，并带出刚才的标注结果。"
-                          okText="返回修改"
-                          cancelText="继续当前题"
-                          onConfirm={() => {
-                            setIsRevisingLastSubmitted(true);
-                            setDetailDrawerOpen(false);
-                          }}
-                        >
-                          <Button size="small">返回上一题修改</Button>
-                        </Popconfirm>
-                      )
-                    }
-                    style={{ marginBottom: 16 }}
-                  />
-                ) : null}
-
+              <Form
+                form={form}
+                layout="vertical"
+                onFinish={handleSubmit}
+                onValuesChange={handleValuesChange}
+              >
                 <Alert
                   type="info"
                   showIcon
                   message="信心等级现在按每个素养分别填写，默认高；它表示你对该素养层级判断的把握程度，会随标注结果提供给复核员参考。"
+                  style={{ marginBottom: 16 }}
+                />
+                <Alert
+                  type="info"
+                  showIcon
+                  message={`请只标注 ${MAX_SELECTED_COMPETENCIES} 个以内最核心的素养，其他相关性较弱的素养保持 0。`}
+                  style={{ marginBottom: 16 }}
+                />
+                <Alert
+                  type="info"
+                  showIcon
+                  message="可以点击题目右上角的“查看详情”，阅览题目难度、知识点、目录、来源映射等详细信息。"
                   style={{ marginBottom: 16 }}
                 />
 
@@ -562,18 +403,21 @@ export function AnnotatePage() {
                         definition={definition?.definition}
                         focusTip={definition?.focus_tip}
                       />
-                      <Form.Item name={["competencies", item.id]} noStyle>
-                        <Radio.Group
-                          options={[
-                            { label: "0", value: 0 },
-                            { label: "1", value: 1 },
-                            { label: "2", value: 2 },
-                            { label: "3", value: 3 },
-                          ]}
-                          optionType="button"
-                          buttonStyle="solid"
-                        />
-                      </Form.Item>
+                      <Space size={6} wrap>
+                        <Typography.Text type="secondary">素养水平</Typography.Text>
+                        <Form.Item name={["competencies", item.id]} noStyle>
+                          <Radio.Group
+                            options={[
+                              { label: "0", value: 0 },
+                              { label: "1", value: 1 },
+                              { label: "2", value: 2 },
+                              { label: "3", value: 3 },
+                            ]}
+                            optionType="button"
+                            buttonStyle="solid"
+                          />
+                        </Form.Item>
+                      </Space>
                       <Space size={6} wrap>
                         <Typography.Text type="secondary">信心等级</Typography.Text>
                         <Form.Item name={["competency_confidence_levels", item.id]} noStyle>
@@ -589,15 +433,16 @@ export function AnnotatePage() {
                   })}
                 </Space>
 
-                <Button
-                  type="primary"
-                  htmlType="submit"
-                  icon={<SendOutlined />}
-                  loading={activeMutation.isPending}
-                  style={{ marginTop: 16 }}
-                >
-                  {isRevisingLastSubmitted ? "重新提交修改" : "提交标注"}
-                </Button>
+                <Space wrap style={{ marginTop: 16 }}>
+                  <Button
+                    type="primary"
+                    htmlType="submit"
+                    icon={<SendOutlined />}
+                    loading={submitMutation.isPending}
+                  >
+                    提交标注
+                  </Button>
+                </Space>
               </Form>
             )}
           </Card>
@@ -614,11 +459,7 @@ export function AnnotatePage() {
         {!displayTask ? (
           <Empty description="当前没有可查看的题目" />
         ) : questionDetailQuery.data ? (
-          <AnnotationQuestionDetail
-            detail={questionDetailQuery.data}
-            viewMode={detailViewMode}
-            onViewModeChange={setDetailViewMode}
-          />
+          <QuestionDetailSections detail={questionDetailQuery.data} />
         ) : (
           <Empty description="未找到题目详情" />
         )}

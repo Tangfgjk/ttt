@@ -6,6 +6,9 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.schemas.annotations import (
     AdminAggregateOverrideRequest,
+    AdminAnnotatorTaskListResponse,
+    AdminRecycleAnnotationTasksRequest,
+    AdminRecycleAnnotationTasksResponse,
     AnnotationPolicySettingsOut,
     AnnotationPolicyUpdateRequest,
     AnnotationPolicyUpdateResponse,
@@ -27,6 +30,8 @@ from app.schemas.annotations import (
     ClaimReviewTaskRequest,
     ClaimReviewTaskResponse,
     PoolSummaryResponse,
+    ReturnReviewTasksRequest,
+    ReturnReviewTasksResponse,
     ReviewTaskListResponse,
     SelectionStrategyItem,
     SelectionBatchRollbackRequest,
@@ -209,6 +214,17 @@ async def reconcile_review_tasks_with_current_rules(
     return AnnotationService(db).reconcile_review_tasks_with_current_rules(payload)
 
 
+@router.post(
+    "/review-tasks/return-for-reannotation",
+    response_model=ReturnReviewTasksResponse,
+)
+async def return_review_tasks_for_reannotation(
+    payload: ReturnReviewTasksRequest,
+    db: Session = Depends(get_db),
+) -> ReturnReviewTasksResponse:
+    return AnnotationService(db).return_my_review_tasks_for_reannotation(payload)
+
+
 @router.get("/review-tasks", response_model=ReviewTaskListResponse)
 async def list_review_tasks(
     reviewer_user_id: int = Query(...),
@@ -236,6 +252,39 @@ async def submit_review_task(
     db: Session = Depends(get_db),
 ) -> SubmitReviewTaskResponse:
     return AnnotationService(db).submit_review_task(review_task_id, payload)
+
+
+@router.get("/admin/annotator-tasks", response_model=AdminAnnotatorTaskListResponse)
+def list_admin_annotator_tasks(
+    admin_user_id: int = Query(...),
+    task_status: str | None = Query(default="IN_PROGRESS"),
+    annotator_user_id: int | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+) -> AdminAnnotatorTaskListResponse:
+    items, total = AnnotationService(db).list_admin_annotator_tasks(
+        admin_user_id=admin_user_id,
+        task_status=task_status,
+        annotator_user_id=annotator_user_id,
+        page=page,
+        page_size=page_size,
+    )
+    return AdminAnnotatorTaskListResponse(
+        items=items,
+        meta=PageMeta(page=page, page_size=page_size, total=total),
+    )
+
+
+@router.post(
+    "/admin/annotator-tasks/recycle",
+    response_model=AdminRecycleAnnotationTasksResponse,
+)
+def recycle_admin_annotator_tasks(
+    payload: AdminRecycleAnnotationTasksRequest,
+    db: Session = Depends(get_db),
+) -> AdminRecycleAnnotationTasksResponse:
+    return AnnotationService(db).recycle_annotation_tasks(payload)
 
 
 @router.get("/admin/questions/{question_id}/review", response_model=AdminQuestionReviewOut)

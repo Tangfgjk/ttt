@@ -349,6 +349,18 @@ class ReviewTaskListResponse(BaseModel):
     meta: PageMeta
 
 
+class ReturnReviewTasksRequest(BaseModel):
+    reviewer_user_id: int
+
+
+class ReturnReviewTasksResponse(BaseModel):
+    scanned_count: int
+    returned_count: int
+    returned_question_ids: list[int]
+    recalled_task_count: int
+    deleted_annotation_count: int
+
+
 class SubmitReviewTaskRequest(BaseModel):
     reviewer_user_id: int
     cognitive_level_id: int | None = None
@@ -402,3 +414,36 @@ class AdminAggregateOverrideRequest(BaseModel):
     final_cognitive_level_id: int | None = None
     competencies: list[AnnotationCompetencyInput] = Field(default_factory=list)
     review_comment: str | None = None
+
+
+class AdminAnnotatorTaskOut(BaseModel):
+    task_id: int
+    question_id: int
+    assignee_id: int
+    assignee_name: str
+    task_status: str
+    question_status: AnnotationPoolStatus
+    assigned_at: datetime
+    started_at: datetime | None = None
+    submitted_at: datetime | None = None
+    source_batch_id: int | None = None
+    submitted_annotation_count: int
+    active_annotation_count: int
+    question: QuestionListItem
+
+
+class AdminAnnotatorTaskListResponse(BaseModel):
+    items: list[AdminAnnotatorTaskOut]
+    meta: PageMeta
+
+
+class AdminRecycleAnnotationTasksRequest(BaseModel):
+    admin_user_id: int
+    task_ids: list[int] = Field(default_factory=list, min_length=1)
+
+
+class AdminRecycleAnnotationTasksResponse(BaseModel):
+    recycled_count: int
+    skipped_count: int
+    recycled_task_ids: list[int]
+    returned_question_ids: list[int]

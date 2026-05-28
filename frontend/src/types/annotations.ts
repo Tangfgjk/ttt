@@ -327,6 +327,18 @@ export type ReviewTaskListResponse = {
   meta: PageMeta;
 };
 
+export type ReturnReviewTasksRequest = {
+  reviewer_user_id: number;
+};
+
+export type ReturnReviewTasksResponse = {
+  scanned_count: number;
+  returned_count: number;
+  returned_question_ids: number[];
+  recalled_task_count: number;
+  deleted_annotation_count: number;
+};
+
 export type SubmitReviewTaskRequest = {
   reviewer_user_id: number;
   cognitive_level_id?: number | null;
@@ -380,4 +392,37 @@ export type AdminAggregateOverrideRequest = {
   final_cognitive_level_id?: number | null;
   competencies: AnnotationCompetencyInput[];
   review_comment?: string | null;
+};
+
+export type AdminAnnotatorTask = {
+  task_id: number;
+  question_id: number;
+  assignee_id: number;
+  assignee_name: string;
+  task_status: string;
+  question_status: AnnotationPoolStatus;
+  assigned_at: string;
+  started_at?: string | null;
+  submitted_at?: string | null;
+  source_batch_id?: number | null;
+  submitted_annotation_count: number;
+  active_annotation_count: number;
+  question: QuestionListItem;
+};
+
+export type AdminAnnotatorTaskListResponse = {
+  items: AdminAnnotatorTask[];
+  meta: PageMeta;
+};
+
+export type AdminRecycleAnnotationTasksRequest = {
+  admin_user_id: number;
+  task_ids: number[];
+};
+
+export type AdminRecycleAnnotationTasksResponse = {
+  recycled_count: number;
+  skipped_count: number;
+  recycled_task_ids: number[];
+  returned_question_ids: number[];
 };

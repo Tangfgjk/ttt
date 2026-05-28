@@ -29,6 +29,7 @@ class TrainingRunCreateRequest(BaseModel):
     include_gold_labels: bool = False
     min_train_samples: int = Field(default=5, ge=1, le=10000)
     device: TrainingDevice = "auto"
+    max_coreset_round: int | None = Field(default=None, ge=1)
 
 
 class TrainingEpochOut(BaseModel):
@@ -226,6 +227,9 @@ class CoresetRunOut(BaseModel):
     baseline_run_id: int | None = None
     baseline_run_no: str | None = None
     baseline_batch_no: str | None = None
+    active_learning_round: int | None = None
+    round_completed_count: int = 0
+    round_unfinished_count: int = 0
     started_at: datetime | None = None
     finished_at: datetime | None = None
     created_at: datetime
