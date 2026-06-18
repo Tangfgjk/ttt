@@ -1,20 +1,18 @@
 # V11 部署文档
 
-`docs/design/v11/` 用于记录本项目第一次云服务器部署后的正式部署与运维经验。
-
-本阶段文档不再停留在设计草案，而是以阿里云 ECS + Docker Compose 的实际部署过程为准，沉淀可复用的操作步骤、更新流程、备份约定和故障处理记录。
+`docs/design/v11/` 用于记录本项目云服务器部署后的正式部署与运维经验。这里保留历史部署记录，实际交接和新服务器部署优先查看 `deploy/` 目录下的操作文档。
 
 ## 文档列表
 
 1. [V11-部署文档V1.md](./V11-部署文档V1.md)
+   - 首次阿里云 ECS + Docker Compose 部署记录、故障处理和运维命令沉淀。
+2. [新服务器 CUDA 部署交接文档](../../../deploy/NEW_SERVER_CUDA_DEPLOYMENT.md)
+   - 面向新接手部署人员的完整流程，包含 GitHub 拉取代码、上传模型和数据库、CUDA 环境、重新部署、备份与排错。
 
-## 版本定位
+## 当前部署基线
 
-V11 部署文档 V1 是当前多人标注试运行环境的第一版部署操作基线，重点覆盖：
-
-- 服务器目录和服务结构
-- 代码从 GitHub 同步到云服务器的流程
-- 数据库作为云端主库时的备份与恢复
-- Docker Compose 重新部署命令
-- 本次部署中遇到的 GitHub、Docker、Torch、磁盘空间等问题和解决办法
-
+- 代码来源：GitHub `Tangfgjk/ttt` 仓库 `master` 分支。
+- 正式运行方式：Docker Compose。
+- 数据库：MySQL 容器，宿主机目录持久化。
+- 模型和训练产物：不进入 GitHub，需要通过 `/opt/ttt/models` 和 `/opt/ttt/artifacts` 单独迁移。
+- CUDA：默认镜像是 CPU PyTorch；新服务器如需 GPU 训练，使用 `deploy/compose/docker-compose.cuda.yml` 和 CUDA 版 PyTorch 构建参数。

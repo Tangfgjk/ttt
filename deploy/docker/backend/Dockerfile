@@ -4,6 +4,11 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PIP_NO_CACHE_DIR=1
 
+ARG PYPI_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+ARG PYPI_TRUSTED_HOST=mirrors.aliyun.com
+ARG TORCH_PACKAGE=torch==2.3.1+cpu
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+
 WORKDIR /app/backend
 
 RUN sed -i \
@@ -16,16 +21,16 @@ RUN sed -i \
 
 COPY backend/pyproject.toml backend/README.md /app/backend/
 
-RUN pip install --upgrade pip -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com \
+RUN pip install --upgrade pip -i "${PYPI_INDEX_URL}" --trusted-host "${PYPI_TRUSTED_HOST}" \
     && python -c "import tomllib; from pathlib import Path; deps = tomllib.loads(Path('pyproject.toml').read_text(encoding='utf-8'))['project']['dependencies']; Path('/tmp/backend-requirements.txt').write_text('\n'.join(dep for dep in deps if not dep.startswith('torch')) + '\n', encoding='utf-8')" \
-    && echo "torch==2.3.1+cpu" > /tmp/torch-cpu-constraints.txt \
-    && pip install torch==2.3.1+cpu --index-url https://download.pytorch.org/whl/cpu \
+    && echo "${TORCH_PACKAGE}" > /tmp/torch-constraints.txt \
+    && pip install "${TORCH_PACKAGE}" --index-url "${TORCH_INDEX_URL}" \
     && pip install -r /tmp/backend-requirements.txt \
-        -c /tmp/torch-cpu-constraints.txt \
-        -i https://mirrors.aliyun.com/pypi/simple/ \
-        --extra-index-url https://download.pytorch.org/whl/cpu \
-        --trusted-host mirrors.aliyun.com \
-    && rm -f /tmp/backend-requirements.txt /tmp/torch-cpu-constraints.txt
+        -c /tmp/torch-constraints.txt \
+        -i "${PYPI_INDEX_URL}" \
+        --extra-index-url "${TORCH_INDEX_URL}" \
+        --trusted-host "${PYPI_TRUSTED_HOST}" \
+    && rm -f /tmp/backend-requirements.txt /tmp/torch-constraints.txt
 
 COPY backend/ /app/backend/
 
