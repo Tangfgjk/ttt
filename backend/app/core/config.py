@@ -48,7 +48,7 @@ class Settings(BaseSettings):
         alias="IMPORT_UPLOAD_DIR",
     )
     embedding_model_path: str = Field(
-        default="E:/zhuanli/rePretrain/math_mlm_model",
+        default="models/math_mlm_model",
         alias="EMBEDDING_MODEL_PATH",
     )
     embedding_model_code: str = Field(

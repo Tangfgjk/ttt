@@ -1581,6 +1581,7 @@ body {
   line-height: 1.8;
   font-size: 15px;
   word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .question-rich-text p {
@@ -1595,11 +1596,23 @@ body {
   max-width: 100%;
   height: auto;
   border-radius: 8px;
+  vertical-align: middle;
 }
 
 .question-rich-text table {
   max-width: 100%;
   border-collapse: collapse;
+}
+
+.question-rich-text .katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 0;
+}
+
+.question-rich-text .katex {
+  white-space: normal;
 }
 
 .question-rich-text--summary {

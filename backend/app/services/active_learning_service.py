@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from functools import lru_cache
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from uuid import uuid4
 
 import numpy as np
@@ -74,6 +74,118 @@ RUN_STATUS_FAILED = "FAILED"
 
 NUM_LEVELS = 4
 LOG_TAIL_BYTES = 64 * 1024
+PORTABLE_CHECKPOINT_PREFIX = Path("artifacts") / "active_learning"
+PORTABLE_MODEL_PREFIX = Path("models")
+
+
+def _backend_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _path_leaf(value: str) -> str:
+    if re.match(r"^[A-Za-z]:[\\/]", value) or "\\" in value:
+        return PureWindowsPath(value).name
+    return Path(value).name
+
+
+def _configured_path(raw_path: str, *, base_dir: Path | None = None) -> Path:
+    path = Path(raw_path)
+    if path.is_absolute():
+        return path
+    return (base_dir or _backend_root()) / path
+
+
+def _configured_checkpoint_dir(checkpoint_dir: str | None = None) -> Path:
+    raw_path = checkpoint_dir or get_settings().active_learning_checkpoint_dir
+    return _configured_path(raw_path)
+
+
+def _configured_embedding_model_path(model_path: str | None = None) -> Path:
+    raw_path = model_path or get_settings().embedding_model_path
+    return _configured_path(raw_path)
+
+
+def _resolve_checkpoint_path(
+    checkpoint_path: str | None,
+    *,
+    checkpoint_dir: str | None = None,
+) -> str:
+    if not checkpoint_path:
+        return ""
+
+    raw_path = str(checkpoint_path)
+    direct_path = Path(raw_path)
+    if direct_path.exists():
+        return str(direct_path)
+
+    checkpoint_root = _configured_checkpoint_dir(checkpoint_dir)
+    normalized = raw_path.replace("\\", "/")
+    portable_prefix = PORTABLE_CHECKPOINT_PREFIX.as_posix() + "/"
+    candidates: list[Path] = []
+
+    if normalized.startswith(portable_prefix):
+        candidates.append(checkpoint_root / normalized[len(portable_prefix) :])
+    elif not direct_path.is_absolute() and not re.match(r"^[A-Za-z]:[\\/]", raw_path):
+        candidates.append(_backend_root() / raw_path)
+        candidates.append(Path.cwd() / raw_path)
+
+    leaf = _path_leaf(raw_path)
+    if leaf:
+        candidates.append(checkpoint_root / leaf)
+
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return str(candidates[0] if candidates else direct_path)
+
+
+def _portable_checkpoint_path(
+    checkpoint_path: str,
+    *,
+    checkpoint_dir: str | None = None,
+) -> str:
+    checkpoint_root = _configured_checkpoint_dir(checkpoint_dir).resolve()
+    path = Path(checkpoint_path)
+    try:
+        relative = path.resolve().relative_to(checkpoint_root)
+        return (PORTABLE_CHECKPOINT_PREFIX / relative).as_posix()
+    except ValueError:
+        leaf = _path_leaf(str(checkpoint_path))
+        if leaf:
+            return (PORTABLE_CHECKPOINT_PREFIX / leaf).as_posix()
+        return str(checkpoint_path).replace("\\", "/")
+
+
+def _resolve_model_path(model_path: str) -> str:
+    raw_path = str(model_path)
+    direct_path = Path(raw_path)
+    if direct_path.exists():
+        return str(direct_path)
+
+    configured_path = _configured_embedding_model_path()
+    normalized = raw_path.replace("\\", "/")
+    portable_prefix = PORTABLE_MODEL_PREFIX.as_posix() + "/"
+    if normalized.startswith(portable_prefix):
+        candidate = configured_path.parent / normalized[len(portable_prefix) :]
+        if candidate.exists():
+            return str(candidate)
+
+    if configured_path.exists():
+        return str(configured_path)
+    return str(direct_path)
+
+
+def _portable_model_path(model_path: str) -> str:
+    configured_path = _configured_embedding_model_path().resolve()
+    path = Path(model_path)
+    try:
+        relative = path.resolve().relative_to(configured_path.parent)
+        return (PORTABLE_MODEL_PREFIX / relative).as_posix()
+    except ValueError:
+        leaf = _path_leaf(str(model_path))
+        if leaf and configured_path.name == leaf:
+            return (PORTABLE_MODEL_PREFIX / leaf).as_posix()
+        return str(model_path).replace("\\", "/")
 
 
 @dataclass(frozen=True)
@@ -1279,14 +1391,15 @@ def _resolve_base_model_metadata(model_path: str) -> tuple[str, str]:
     from transformers import AutoConfig
 
     settings = get_settings()
-    config = AutoConfig.from_pretrained(model_path)
+    resolved_model_path = _resolve_model_path(model_path)
+    config = AutoConfig.from_pretrained(resolved_model_path)
     model_type = str(getattr(config, "model_type", "") or "unknown")
-    resolved_path = os.path.abspath(model_path)
+    resolved_path = os.path.abspath(resolved_model_path)
     base_model_name = Path(
-        str(getattr(config, "_name_or_path", "") or model_path)
-    ).name or Path(model_path).name
+        str(getattr(config, "_name_or_path", "") or resolved_model_path)
+    ).name or Path(resolved_model_path).name
     configured_name = (settings.embedding_model_name or "").strip()
-    configured_path = os.path.abspath(settings.embedding_model_path)
+    configured_path = os.path.abspath(_resolve_model_path(settings.embedding_model_path))
     configured_tokens = {
         token for token in re.split(r"[^a-z0-9]+", configured_name.lower()) if token
     }
@@ -1427,6 +1540,7 @@ class _ActiveLearningRunner:
                 progress_callback=logger.write,
             )
             checkpoint_path = self._checkpoint_path(run.run_no)
+            stored_checkpoint_path = _portable_checkpoint_path(checkpoint_path)
             logger.write(f"Best metrics: {best_metrics}.")
             logger.write(f"Saving checkpoint to {checkpoint_path}.")
             model.save_checkpoint(
@@ -1459,10 +1573,10 @@ class _ActiveLearningRunner:
                 ),
                 model_type=model_type,
                 base_model_name=base_model_name,
-                artifact_path=checkpoint_path,
+                artifact_path=stored_checkpoint_path,
                 metrics_json=best_metrics,
                 training_run_id=run.id,
-                checkpoint_path=checkpoint_path,
+                checkpoint_path=stored_checkpoint_path,
                 is_active=True,
                 level_accuracy=_metric_decimal(best_metrics.get("level_accuracy")),
                 macro_f1=_metric_decimal(best_metrics.get("macro_f1")),
@@ -2454,6 +2568,7 @@ class _ActiveLearningRunner:
                 round_by_fingerprint[fingerprint] = next_round
                 next_round += 1
             round_by_run_id[run.id] = round_by_fingerprint[fingerprint]
+        return round_by_run_id
 
     def _prediction_candidates(
         self,
@@ -2577,7 +2692,8 @@ class _TorchCompetencyModel:
 
         self.torch = torch
         self.nn = nn
-        self.model_path = model_path
+        resolved_model_path = _resolve_model_path(model_path)
+        self.model_path = _portable_model_path(resolved_model_path)
         self.num_competencies = num_competencies
         self.num_levels = num_levels
         self.batch_size = batch_size
@@ -2594,8 +2710,8 @@ class _TorchCompetencyModel:
         self._train_generator = torch.Generator(device="cpu")
         if random_seed is not None:
             self._set_reproducible_mode(random_seed)
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
-        backbone = AutoModel.from_pretrained(model_path)
+        self.tokenizer = AutoTokenizer.from_pretrained(resolved_model_path)
+        backbone = AutoModel.from_pretrained(resolved_model_path)
         self.model = _FrozenBackboneClassifier(
             backbone,
             num_competencies,
@@ -2752,7 +2868,8 @@ class _TorchCompetencyModel:
     ) -> "_TorchCompetencyModel":
         import torch
 
-        checkpoint = torch.load(checkpoint_path, map_location="cpu")
+        resolved_checkpoint_path = _resolve_checkpoint_path(checkpoint_path)
+        checkpoint = torch.load(resolved_checkpoint_path, map_location="cpu")
         model = cls(
             model_path=checkpoint["model_path"],
             num_competencies=int(checkpoint["num_competencies"]),

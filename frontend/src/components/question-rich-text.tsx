@@ -21,6 +21,52 @@ function looksLikeHtml(value: string) {
   return /<\/?[a-z][\s\S]*>/i.test(value);
 }
 
+function decodeHtmlEntities(value: string) {
+  return value
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&apos;/gi, "'");
+}
+
+function htmlToPlainText(value: string) {
+  return decodeHtmlEntities(
+    value
+      .replace(/<\s*br\s*\/?>/gi, "\n")
+      .replace(/<\/\s*(?:p|div|li|tr|section|article|h[1-6])\s*>/gi, "\n")
+      .replace(/<[^>]+>/g, ""),
+  );
+}
+
+function normalizeForCompleteness(value: string) {
+  return value
+    .replace(/\s+/g, "")
+    .replace(/[，。；：、,.!?！？;:]/g, "")
+    .trim();
+}
+
+function htmlLooksIncomplete(html: string, text: string) {
+  const htmlPlain = normalizeForCompleteness(htmlToPlainText(html));
+  const textPlain = normalizeForCompleteness(decodeHtmlEntities(text));
+
+  if (textPlain.length < 16 || !htmlPlain) {
+    return false;
+  }
+
+  if (htmlPlain.includes(textPlain)) {
+    return false;
+  }
+
+  const htmlIsOnlyPartOfText = textPlain.includes(htmlPlain) && textPlain.length > htmlPlain.length + 12;
+  const htmlMissesTextPrefix = !htmlPlain.includes(textPlain.slice(0, Math.min(18, textPlain.length)));
+  const textIsMuchLonger = textPlain.length > htmlPlain.length * 1.28;
+
+  return htmlIsOnlyPartOfText || (textIsMuchLonger && htmlMissesTextPrefix);
+}
+
 const knownFontFamilyPattern =
   "(?:Arial|Calibri|Cambria|Times New Roman|Times|Helvetica|Microsoft YaHei|SimSun|FangSong|KaiTi|宋体|黑体|楷体|仿宋|微软雅黑)";
 
@@ -37,14 +83,23 @@ const styleDirectivePatterns = [
 function normalizeLatexEscapes(value: string) {
   return value
     .replace(/\\n(?=\s*[A-ZＡ-Ｚ0-9一-龥])/g, "\n")
-    .replace(/\\\\(?=[A-Za-z{}])/g, "\\");
+    .replace(
+      /\\\\(?=(?:frac|sqrt|left|right|times|cdot|le|ge|neq|begin|end|overline|underline|angle|parallel|perp|sin|cos|tan|log|ln|sum|int|alpha|beta|gamma|delta|pi|theta|lambda|mu|sigma|omega|infty|text|mathrm|mathbf)\b)/g,
+      "\\",
+    );
+}
+
+function normalizeLegacyMathMarkup(value: string) {
+  return value
+    .replace(/（\s*##\s*）/g, "(##)")
+    .replace(/\(\s*##\s*\)/g, "(##)");
 }
 
 function cleanQuestionContent(value: string) {
   const cleaned = styleDirectivePatterns
     .reduce((current, pattern) => current.replace(pattern, ""), value)
     .replace(/\sstyle\s*=\s*(["'])[\s\S]*?\1/gi, "");
-  return normalizeLatexEscapes(cleaned);
+  return normalizeLegacyMathMarkup(normalizeLatexEscapes(cleaned));
 }
 
 function linkifyImageUrls(value: string) {
@@ -57,11 +112,12 @@ function linkifyImageUrls(value: string) {
 
 function buildMarkup(html?: string | null, text?: string | null) {
   const cleanedHtml = html ? cleanQuestionContent(html) : "";
-  if (cleanedHtml.trim()) {
+  const cleanedText = text ? cleanQuestionContent(text) : "";
+
+  if (cleanedHtml.trim() && (!cleanedText.trim() || !htmlLooksIncomplete(cleanedHtml, cleanedText))) {
     return cleanedHtml;
   }
 
-  const cleanedText = text ? cleanQuestionContent(text) : "";
   if (!cleanedText.trim()) {
     return "";
   }
@@ -92,6 +148,7 @@ export function QuestionRichText({
       delimiters: [
         { left: "$$", right: "$$", display: true },
         { left: "\\[", right: "\\]", display: true },
+        { left: "(##)", right: "(##)", display: true },
         { left: "$", right: "$", display: false },
         { left: "\\(", right: "\\)", display: false },
       ],
