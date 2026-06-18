@@ -46,7 +46,8 @@
 - 训练产物目录：
   - 旧服务器：`/opt/ttt/artifacts`
   - 新服务器：`/opt/ttt/artifacts`
-  - 如果要继续使用旧服务器训练出的 `.pth` 模型版本，必须迁移。
+  - 可选迁移。如果文件太大可以不上传，后续在新服务器重新训练即可。
+  - 只有要继续使用旧服务器训练出的 `.pth` 模型版本时，才需要迁移。
 - `.env`：
   - 旧服务器可参考，但不要提交到 GitHub。
   - 新服务器建议重新生成密码后填写。
@@ -270,9 +271,9 @@ gzip -t /opt/ttt/backups/ttt_prod_最新备份.sql.gz
 ls -lh /opt/ttt/backups/
 ```
 
-### 7.3 上传 uploads 和 artifacts
+### 7.3 上传 uploads；artifacts 可选
 
-如果旧服务器上已有题目附件或训练模型，建议迁移：
+如果旧服务器上已有题目附件，建议迁移 `uploads`。`artifacts` 是历史训练产物，文件较大时可以不迁移，后续在新服务器重新训练即可。
 
 ```bash
 # 在旧服务器执行，打包
@@ -288,6 +289,8 @@ tar -czf /opt/ttt/backups/artifacts_$(date +%F_%H%M%S).tar.gz -C /opt/ttt artifa
 tar -xzf /opt/ttt/backups/uploads_xxx.tar.gz -C /opt/ttt
 tar -xzf /opt/ttt/backups/artifacts_xxx.tar.gz -C /opt/ttt
 ```
+
+如果不迁移 `artifacts`，跳过 artifacts 打包和解压命令即可。
 
 ## 8. 首次构建和启动
 
@@ -556,8 +559,8 @@ No such file or directory: /data/artifacts/active_learning/train_xxx.pth
 
 处理：
 
-1. 从旧服务器迁移 `/opt/ttt/artifacts/active_learning`。
-2. 如果没有旧文件，可以重新训练模型，生成新的模型版本。
+1. 如果必须使用旧模型，从旧服务器迁移 `/opt/ttt/artifacts/active_learning`。
+2. 如果不需要旧模型，可以忽略旧记录，重新训练模型生成新的模型版本。
 
 ### 15.6 MySQL 不要直接公网开放
 
@@ -579,7 +582,7 @@ docker exec -it ${COMPOSE_PROJECT_NAME:-ttt}-mysql mysql -uroot -p"$MYSQL_ROOT_P
 - [ ] `/opt/ttt/app` 已从 GitHub `master` 拉取最新代码
 - [ ] `/opt/ttt/models/math_mlm_model` 已上传
 - [ ] `/opt/ttt/uploads` 已按需要迁移
-- [ ] `/opt/ttt/artifacts` 已按需要迁移
+- [ ] `/opt/ttt/artifacts` 已创建；如不迁移旧训练模型，可以为空，后续训练会生成新文件
 - [ ] `/opt/ttt/backups` 中有本次导入的数据库备份
 - [ ] `.env` 已配置强密码，且未提交到 GitHub
 - [ ] `docker compose ps` 中 `mysql`、`redis`、`backend`、`nginx` 均正常

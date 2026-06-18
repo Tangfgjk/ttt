@@ -14,7 +14,7 @@
 ## 推荐阅读顺序
 
 1. `FIN_DEPLOYMENT_GUIDE.md`
-   - 最终交付版部署文档。GitHub 仓库已公开，对方在服务器上直接 HTTPS 克隆代码；再上传 `C:\Users\29694\Desktop\单独上传文件`，按文档完成 CUDA 部署。
+   - 最终交付版部署文档。GitHub 仓库已公开，对方在服务器上直接 HTTPS 克隆代码；再上传数据库、模型和 uploads，`artifacts` 可不上传，按文档完成 CUDA 部署。
 2. `NEW_SERVER_CUDA_DEPLOYMENT.md`
    - 给新接手部署的人使用，覆盖从购买新服务器、拉取 GitHub 代码、上传模型和数据库，到 CUDA 训练验证的完整流程。
 3. `DEPLOYMENT_GUIDE.md`

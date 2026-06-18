@@ -43,7 +43,7 @@ C:\Users\29694\Desktop\单独上传文件
 
 ```text
 单独上传文件
-├─ artifacts
+├─ artifacts                 # 可选；文件太大时可以不上传，后续在服务器重新训练生成
 ├─ db_backups
 │  └─ local_competency_annotation_dev_2026-06-18_190531.sql
 ├─ math_mlm_model
@@ -65,7 +65,7 @@ C:\Users\29694\Desktop\单独上传文件
 | `C:\Users\29694\Desktop\单独上传文件\db_backups\local_competency_annotation_dev_2026-06-18_190531.sql` | `/opt/ttt/backups/local_competency_annotation_dev_2026-06-18_190531.sql` | 数据库完整备份 |
 | `C:\Users\29694\Desktop\单独上传文件\math_mlm_model` | `/opt/ttt/models/math_mlm_model` | 嵌入模型 |
 | `C:\Users\29694\Desktop\单独上传文件\uploads` | `/opt/ttt/uploads` | 导入文件、附件、题目相关上传文件 |
-| `C:\Users\29694\Desktop\单独上传文件\artifacts` | `/opt/ttt/artifacts` | 主动学习、训练模型、历史训练产物 |
+| `C:\Users\29694\Desktop\单独上传文件\artifacts` | `/opt/ttt/artifacts` | 可选。历史训练产物和旧 `.pth` 模型；不上传也能部署，后续在服务器重新训练即可 |
 
 不要上传：
 
@@ -274,7 +274,17 @@ scp -r "$src\uploads" root@$server:/opt/ttt/
 /opt/ttt/uploads
 ```
 
-### 7.4 上传 artifacts
+### 7.4 artifacts 可以不上传
+
+`artifacts` 文件夹通常比较大，里面主要是历史训练产物、主动学习模型文件和旧 `.pth` 模型。
+
+本次可以不上传 `artifacts`。不上传的影响是：
+
+- 历史训练模型文件不会迁移到新服务器。
+- 如果数据库里记录了旧模型版本，点击旧模型可能找不到对应 `.pth` 文件。
+- 后续在新服务器上重新训练模型后，会自动在 `/opt/ttt/artifacts` 生成新的训练产物。
+
+如果确实要迁移历史训练模型，再执行下面命令：
 
 ```powershell
 scp -r "$src\artifacts" root@$server:/opt/ttt/
@@ -296,6 +306,8 @@ ls -lh /opt/ttt/models/math_mlm_model/
 ls -lh /opt/ttt/uploads/
 ls -lh /opt/ttt/artifacts/
 ```
+
+如果没有上传 `artifacts`，`/opt/ttt/artifacts` 为空或只有后续运行生成的新文件，这是正常的。
 
 模型目录至少应看到：
 
@@ -599,9 +611,9 @@ No such file or directory: /data/artifacts/active_learning/train_xxx.pth
 
 处理：
 
-1. 确认已经上传 `C:\Users\29694\Desktop\单独上传文件\artifacts`。
-2. 确认服务器路径是 `/opt/ttt/artifacts`。
-3. 如果确实没有旧模型文件，可以重新训练生成新模型。
+1. 如果需要继续使用旧训练模型，再上传 `C:\Users\29694\Desktop\单独上传文件\artifacts`。
+2. 如果不需要旧模型，可以忽略旧模型记录，直接在新服务器重新训练生成新模型。
+3. 新训练产物会写入 `/opt/ttt/artifacts`。
 
 ### 16.6 数据库不要公网开放
 
@@ -630,7 +642,7 @@ docker exec -it ${COMPOSE_PROJECT_NAME:-ttt}-mysql mysql -uroot -p"$MYSQL_ROOT_P
 - [ ] `/opt/ttt/app` 已从 GitHub 拉取 `master`
 - [ ] `/opt/ttt/models/math_mlm_model` 已上传
 - [ ] `/opt/ttt/uploads` 已上传
-- [ ] `/opt/ttt/artifacts` 已上传
+- [ ] `/opt/ttt/artifacts` 已创建；如不迁移旧训练模型，可以为空，后续训练会生成新文件
 - [ ] `/opt/ttt/backups/local_competency_annotation_dev_2026-06-18_190531.sql` 已上传
 - [ ] `.env` 已修改数据库密码
 - [ ] Torch 已配置为 CUDA：`torch==2.3.1+cu121`
