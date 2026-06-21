@@ -1,11 +1,8 @@
 services:
   backend:
-    gpus: all
-    environment:
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility
-
-  worker:
+    build:
+      args:
+        INSTALL_ML: "true"
     gpus: all
     environment:
       NVIDIA_VISIBLE_DEVICES: all

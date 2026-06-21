@@ -26,28 +26,6 @@ services:
     networks:
       - ttt-net
 
-  redis:
-    image: redis:7.4-alpine
-    container_name: ${COMPOSE_PROJECT_NAME:-ttt}-redis
-    restart: unless-stopped
-    command:
-      - redis-server
-      - --appendonly
-      - "yes"
-    volumes:
-      - ${HOST_REDIS_DIR}:/data
-    healthcheck:
-      test:
-        - CMD
-        - redis-cli
-        - ping
-      interval: 10s
-      timeout: 3s
-      retries: 10
-      start_period: 10s
-    networks:
-      - ttt-net
-
   backend:
     build:
       context: ../..
@@ -55,6 +33,7 @@ services:
       args:
         PYPI_INDEX_URL: ${PYPI_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}
         PYPI_TRUSTED_HOST: ${PYPI_TRUSTED_HOST:-mirrors.aliyun.com}
+        INSTALL_ML: ${INSTALL_ML:-true}
         TORCH_PACKAGE: ${TORCH_PACKAGE:-torch==2.3.1+cpu}
         TORCH_INDEX_URL: ${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
     container_name: ${COMPOSE_PROJECT_NAME:-ttt}-backend
@@ -63,8 +42,6 @@ services:
       - .env
     depends_on:
       mysql:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     command:
       - uvicorn
@@ -90,37 +67,6 @@ services:
     networks:
       - ttt-net
 
-  worker:
-    build:
-      context: ../..
-      dockerfile: deploy/docker/backend/Dockerfile
-      args:
-        PYPI_INDEX_URL: ${PYPI_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}
-        PYPI_TRUSTED_HOST: ${PYPI_TRUSTED_HOST:-mirrors.aliyun.com}
-        TORCH_PACKAGE: ${TORCH_PACKAGE:-torch==2.3.1+cpu}
-        TORCH_INDEX_URL: ${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
-    container_name: ${COMPOSE_PROJECT_NAME:-ttt}-worker
-    restart: unless-stopped
-    env_file:
-      - .env
-    depends_on:
-      mysql:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    command:
-      - celery
-      - -A
-      - app.tasks.celery_app:celery_app
-      - worker
-      - --loglevel=INFO
-    volumes:
-      - ${HOST_UPLOADS_DIR}:/data/uploads
-      - ${HOST_ARTIFACTS_DIR}:/data/artifacts
-      - ${HOST_MODELS_DIR}:/data/models:ro
-    networks:
-      - ttt-net
-
   migrate:
     build:
       context: ../..
@@ -128,6 +74,7 @@ services:
       args:
         PYPI_INDEX_URL: ${PYPI_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}
         PYPI_TRUSTED_HOST: ${PYPI_TRUSTED_HOST:-mirrors.aliyun.com}
+        INSTALL_ML: "false"
         TORCH_PACKAGE: ${TORCH_PACKAGE:-torch==2.3.1+cpu}
         TORCH_INDEX_URL: ${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
     container_name: ${COMPOSE_PROJECT_NAME:-ttt}-migrate

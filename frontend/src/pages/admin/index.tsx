@@ -3,6 +3,7 @@ import {
   RobotOutlined,
   ThunderboltOutlined,
 } from "@ant-design/icons";
+import { useQuery } from "@tanstack/react-query";
 import {
   Alert,
   Button,
@@ -27,7 +28,6 @@ import {
   message,
   theme,
 } from "antd";
-import type { AxiosError } from "axios";
 import {
   useCallback,
   useEffect,
@@ -39,6 +39,7 @@ import type { Key } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { formatBackendDateTime as formatDateTime } from "@/app/date-time";
+import { getRequestFeedback } from "@/app/request-feedback";
 import { usePageHashScroll } from "@/app/use-page-hash-scroll";
 import { useAuthStore } from "@/app/store/auth-store";
 import {
@@ -46,6 +47,7 @@ import {
   annotationStatusLabelMap,
 } from "@/constants/annotation-status";
 import { getRunStatusColor, getRunStatusLabel } from "@/constants/run-status";
+import { getSystemCapabilities } from "@/services/system";
 import {
   useActiveLearningOverview,
   useCancelCoresetRun,
@@ -143,6 +145,11 @@ export function AdminPage() {
   const [trainingCardHeight, setTrainingCardHeight] = useState<number | undefined>();
 
   const { data: activeLearning } = useActiveLearningOverview();
+  const { data: systemCapabilities } = useQuery({
+    queryKey: ["system", "capabilities"],
+    queryFn: getSystemCapabilities,
+    staleTime: 60_000,
+  });
   const { data: annotationPolicy } = useAnnotationPolicy();
   const {
     data: poolSummary,
@@ -318,18 +325,21 @@ export function AdminPage() {
   const predictionProgress = getPredictionProgress(latestPredictionRun);
   const coresetProgress = getCoreSetProgress(latestCoresetRun);
 
-  const getRequestErrorMessage = (error: unknown, fallback: string) => {
-    const axiosError = error as AxiosError<{ detail?: string }>;
-    if (axiosError.response?.data?.detail) {
-      return axiosError.response.data.detail;
+  const showRequestFeedback = (error: unknown, fallback: string) => {
+    const feedback = getRequestFeedback(error, fallback);
+    if (feedback.level === "warning") {
+      message.warning(feedback.content);
+      return;
     }
-    if (axiosError.code === "ECONNABORTED") {
-      return `${fallback}：请求超时，请稍后重试。`;
+    message.error(feedback.content);
+  };
+
+  const ensureMlRuntimeAvailable = () => {
+    if (systemCapabilities?.ml_runtime_available !== false) {
+      return true;
     }
-    if (axiosError.message) {
-      return `${fallback}：${axiosError.message}`;
-    }
-    return fallback;
+    message.warning(systemCapabilities.message);
+    return false;
   };
 
   const handleStartTraining = async (values: {
@@ -344,6 +354,7 @@ export function AdminPage() {
     device: "auto" | "cpu" | "cuda";
     max_coreset_round?: number | null;
   }) => {
+    if (!ensureMlRuntimeAvailable()) return;
     if (values.max_coreset_round) {
       const firstIncompleteRound = coresetRoundOptions.find(
         (item) => item.value <= Number(values.max_coreset_round) && item.unfinishedCount > 0,
@@ -356,14 +367,18 @@ export function AdminPage() {
         return;
       }
     }
-    const result = await trainingMutation.mutateAsync({
-      ...values,
-      max_coreset_round: values.max_coreset_round ?? null,
-      random_seed: 42,
-      include_gold_labels: includeGoldLabels,
-      triggered_by_user_id: session?.id ?? null,
-    });
-    message.success(`训练任务已创建：${result.run_no}`);
+    try {
+      const result = await trainingMutation.mutateAsync({
+        ...values,
+        max_coreset_round: values.max_coreset_round ?? null,
+        random_seed: 42,
+        include_gold_labels: includeGoldLabels,
+        triggered_by_user_id: session?.id ?? null,
+      });
+      message.success(`训练任务已创建：${result.run_no}`);
+    } catch (error) {
+      showRequestFeedback(error, "模型训练失败");
+    }
   };
 
   const handleCancelTraining = async () => {
@@ -379,13 +394,18 @@ export function AdminPage() {
     batch_size: number;
     auto_move_to_waiting: boolean;
   }) => {
-    const result = await predictionMutation.mutateAsync({
-      ...values,
-      target_stage: "junior",
-      model_version_id: values.model_version_id ?? null,
-      triggered_by_user_id: session?.id ?? null,
-    });
-    message.success(`预测任务已创建：${result.run_no}`);
+    if (!ensureMlRuntimeAvailable()) return;
+    try {
+      const result = await predictionMutation.mutateAsync({
+        ...values,
+        target_stage: "junior",
+        model_version_id: values.model_version_id ?? null,
+        triggered_by_user_id: session?.id ?? null,
+      });
+      message.success(`预测任务已创建：${result.run_no}`);
+    } catch (error) {
+      showRequestFeedback(error, "低置信度预测失败");
+    }
   };
 
   const handleCancelPrediction = async () => {
@@ -402,6 +422,7 @@ export function AdminPage() {
     data_scope: SelectionDataScope;
     update_mode: CoresetUpdateMode;
   }) => {
+    if (!ensureMlRuntimeAvailable()) return;
     try {
       const result = await coresetMutation.mutateAsync({
         ...values,
@@ -409,7 +430,7 @@ export function AdminPage() {
       });
       message.success(`CoreSet 任务已创建：${result.run_no}`);
     } catch (error) {
-      message.error(getRequestErrorMessage(error, "CoreSet 选题失败"));
+      showRequestFeedback(error, "CoreSet 选题失败");
     }
   };
 
@@ -481,7 +502,7 @@ export function AdminPage() {
         `已切换为 ${result.annotator_count} 人标注策略，${result.affected_question_count} 道未开工题目正在后台同步。`,
       );
     } catch (error) {
-      message.error(getRequestErrorMessage(error, "更新标注策略失败"));
+      showRequestFeedback(error, "更新标注策略失败");
     }
   };
 

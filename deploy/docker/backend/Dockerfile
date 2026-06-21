@@ -6,6 +6,7 @@ ENV PIP_NO_CACHE_DIR=1
 
 ARG PYPI_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 ARG PYPI_TRUSTED_HOST=mirrors.aliyun.com
+ARG INSTALL_ML=true
 ARG TORCH_PACKAGE=torch==2.3.1+cpu
 ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 
@@ -22,15 +23,20 @@ RUN sed -i \
 COPY backend/pyproject.toml backend/README.md /app/backend/
 
 RUN pip install --upgrade pip -i "${PYPI_INDEX_URL}" --trusted-host "${PYPI_TRUSTED_HOST}" \
-    && python -c "import tomllib; from pathlib import Path; deps = tomllib.loads(Path('pyproject.toml').read_text(encoding='utf-8'))['project']['dependencies']; Path('/tmp/backend-requirements.txt').write_text('\n'.join(dep for dep in deps if not dep.startswith('torch')) + '\n', encoding='utf-8')" \
-    && echo "${TORCH_PACKAGE}" > /tmp/torch-constraints.txt \
-    && pip install "${TORCH_PACKAGE}" --index-url "${TORCH_INDEX_URL}" \
+    && python -c "import tomllib; from pathlib import Path; project = tomllib.loads(Path('pyproject.toml').read_text(encoding='utf-8'))['project']; Path('/tmp/backend-requirements.txt').write_text('\n'.join(project['dependencies']) + '\n', encoding='utf-8'); Path('/tmp/ml-requirements.txt').write_text('\n'.join(dep for dep in project['optional-dependencies']['ml'] if not dep.startswith('torch')) + '\n', encoding='utf-8')" \
     && pip install -r /tmp/backend-requirements.txt \
-        -c /tmp/torch-constraints.txt \
         -i "${PYPI_INDEX_URL}" \
-        --extra-index-url "${TORCH_INDEX_URL}" \
         --trusted-host "${PYPI_TRUSTED_HOST}" \
-    && rm -f /tmp/backend-requirements.txt /tmp/torch-constraints.txt
+    && if [ "${INSTALL_ML}" = "true" ]; then \
+        echo "${TORCH_PACKAGE}" > /tmp/torch-constraints.txt \
+        && pip install "${TORCH_PACKAGE}" --index-url "${TORCH_INDEX_URL}" \
+        && pip install -r /tmp/ml-requirements.txt \
+            -c /tmp/torch-constraints.txt \
+            -i "${PYPI_INDEX_URL}" \
+            --extra-index-url "${TORCH_INDEX_URL}" \
+            --trusted-host "${PYPI_TRUSTED_HOST}"; \
+    fi \
+    && rm -f /tmp/backend-requirements.txt /tmp/ml-requirements.txt /tmp/torch-constraints.txt
 
 COPY backend/ /app/backend/
 

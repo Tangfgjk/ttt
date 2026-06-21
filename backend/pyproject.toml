@@ -13,20 +13,23 @@ dependencies = [
   "pydantic-settings>=2.8.0",
   "pymysql>=1.1.1",
   "cryptography>=47.0.0",
-  "redis>=6.0.0",
-  "celery>=5.5.0",
   "python-dotenv>=1.1.0",
   "python-multipart>=0.0.20",
   "orjson>=3.10.0",
   "openpyxl>=3.1.0",
   "numpy>=1.26.0,<2.0.0",
-  "scikit-learn>=1.4.0",
+]
+
+[project.optional-dependencies]
+ml = [
   "safetensors>=0.4.0",
   "torch>=2.2.0,<2.4.0",
   "transformers>=4.40.0,<5.0.0",
 ]
-
-[project.optional-dependencies]
+worker = [
+  "celery>=5.5.0",
+  "redis>=6.0.0",
+]
 dev = [
   "pytest>=8.3.0",
   "pytest-asyncio>=0.26.0",

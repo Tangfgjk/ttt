@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -16,8 +16,18 @@ from app.schemas.active_learning import (
     TrainingRunOut,
 )
 from app.services.active_learning_service import ActiveLearningService
+from app.services.runtime_capabilities import detect_ml_runtime
 
 router = APIRouter()
+
+
+def require_ml_runtime() -> None:
+    capability = detect_ml_runtime()
+    if not capability.available:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=capability.message,
+        )
 
 
 @router.get("/overview", response_model=ActiveLearningOverviewResponse)
@@ -30,6 +40,7 @@ async def get_active_learning_overview(
 @router.post("/training-runs", response_model=TrainingRunOut)
 async def start_training_run(
     payload: TrainingRunCreateRequest,
+    _: None = Depends(require_ml_runtime),
     db: Session = Depends(get_db),
 ) -> TrainingRunOut:
     return ActiveLearningService(db).start_training_run(payload)
@@ -80,6 +91,7 @@ async def activate_model_version(
 @router.post("/prediction-runs", response_model=PredictionRunOut)
 async def start_prediction_run(
     payload: PredictionRunCreateRequest,
+    _: None = Depends(require_ml_runtime),
     db: Session = Depends(get_db),
 ) -> PredictionRunOut:
     return ActiveLearningService(db).start_prediction_run(payload)
@@ -109,6 +121,7 @@ async def cancel_prediction_run(
 @router.post("/coreset-runs", response_model=CoresetRunOut)
 async def start_coreset_run(
     payload: CoresetRunCreateRequest,
+    _: None = Depends(require_ml_runtime),
     db: Session = Depends(get_db),
 ) -> CoresetRunOut:
     return ActiveLearningService(db).start_coreset_run(payload)

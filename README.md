@@ -41,7 +41,7 @@ ttt/
 
 ```powershell
 cd C:\Users\29694\Desktop\ttt\backend
-.\.venv\Scripts\python.exe -m pip install -e .[dev]
+.\.venv\Scripts\python.exe -m pip install -e ".[ml,dev]"
 ```
 
 后端配置文件为 `backend/.env`，关键配置包括：

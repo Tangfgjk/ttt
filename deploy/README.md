@@ -4,19 +4,20 @@
 
 ## 目录说明
 
-- `compose/docker-compose.yml`：主 Compose 编排文件，本次 FIN 部署需与 CUDA 覆盖文件配合使用。
-- `compose/docker-compose.cuda.yml`：CUDA 服务器覆盖配置，本次 FIN 部署必须和主 Compose 文件一起使用。
+- `compose/docker-compose.yml`：主 Compose 编排文件。
+- `compose/docker-compose.annotation.yml`：云端纯标注覆盖配置，跳过 PyTorch 和 Transformers 安装。
+- `compose/docker-compose.cuda.yml`：历史 CUDA 覆盖配置，仅供本地或专用训练服务器参考。
 - `compose/.env.example`：部署变量模板，实际部署时复制为 `.env`。
-- `docker/backend/Dockerfile`：后端、worker、迁移任务共用镜像。
+- `docker/backend/Dockerfile`：后端和迁移任务共用镜像，可通过 `INSTALL_ML` 控制机器学习依赖。
 - `docker/frontend/Dockerfile`：前端构建和 Nginx 运行镜像。
 - `docker/nginx/default.conf`：前端静态文件托管和 API 反向代理配置。
 
 ## 推荐阅读顺序
 
 1. `FIN_DEPLOYMENT_GUIDE.md`
-   - 最终交付版部署文档。GitHub 仓库已公开，对方在服务器上直接 HTTPS 克隆代码；再上传数据库、模型和 uploads，`artifacts` 可不上传，按文档完成 CUDA 部署。
+   - 当前最终交付版。服务器直接 HTTPS 克隆代码，只上传数据库和 uploads，按纯标注模式部署。
 2. `NEW_SERVER_CUDA_DEPLOYMENT.md`
-   - 给新接手部署的人使用，覆盖从购买新服务器、拉取 GitHub 代码、上传模型和数据库，到 CUDA 训练验证的完整流程。
+   - 历史 CUDA 部署参考，不是当前云端部署方案。
 3. `DEPLOYMENT_GUIDE.md`
    - 早期从零部署流程记录。
 4. `OPERATIONS_GUIDE.md`
@@ -26,12 +27,12 @@
 
 ## 常用命令
 
-FIN CUDA 部署：
+FIN 云端纯标注部署：
 
 ```bash
 cd /opt/ttt/app/deploy/compose
-docker compose --env-file .env -f docker-compose.yml -f docker-compose.cuda.yml up -d --build
-docker compose --env-file .env -f docker-compose.yml -f docker-compose.cuda.yml ps
+docker compose --env-file .env -f docker-compose.yml -f docker-compose.annotation.yml up -d --build
+docker compose --env-file .env -f docker-compose.yml -f docker-compose.annotation.yml ps
 ```
 
 数据库备份：

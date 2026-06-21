@@ -48,7 +48,7 @@ cp .env.example .env
 2. 安装依赖
 
 ```bash
-pip install -e .[dev]
+pip install -e ".[ml,dev]"
 ```
 
 3. 执行数据库迁移
